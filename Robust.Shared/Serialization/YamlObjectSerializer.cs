@@ -994,30 +994,19 @@ namespace Robust.Shared.Serialization
 
         private static bool TryGenericDictType(Type type, [NotNullWhen(true)] out Type? keyType, [NotNullWhen(true)] out Type? valType)
         {
-            var isGeneric = type.GetTypeInfo().IsGenericType;
+            var isDict = type.GetTypeInfo().IsGenericType && type.GetGenericTypeDefinition() == typeof(Dictionary<,>);
 
-            if (!isGeneric)
+            if (isDict)
             {
-                keyType = default;
-                valType = default;
-                return false;
-            }
-            
-            var genericTypeDefinition = type.GetGenericTypeDefinition();
-            var isDict = genericTypeDefinition == typeof(Dictionary<,>) ||
-                         genericTypeDefinition == typeof(SortedDictionary<,>);
-
-            if (!isDict)
-            {
-                keyType = default;
-                valType = default;
-                return false;
+                var genArgs = type.GetGenericArguments();
+                keyType = genArgs[0];
+                valType = genArgs[1];
+                return true;
             }
 
-            var genArgs = type.GetGenericArguments();
-            keyType = genArgs[0];
-            valType = genArgs[1];
-            return true;
+            keyType = default;
+            valType = default;
+            return false;
         }
 
         private static bool TryGenericHashSetType(Type type, [NotNullWhen(true)] out Type? setType)
