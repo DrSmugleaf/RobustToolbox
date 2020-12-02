@@ -41,6 +41,8 @@ namespace Robust.Client.ViewVariables
         private readonly Dictionary<uint, TaskCompletionSource<ViewVariablesBlob>> _requestedData
             = new();
 
+        public IReadOnlyDictionary<ViewVariablesInstance, SS14Window> Windows => _windows;
+
         public void Initialize()
         {
             _netManager.RegisterNetMessage<MsgViewVariablesOpenSession>(MsgViewVariablesOpenSession.NAME,
