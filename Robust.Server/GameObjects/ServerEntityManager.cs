@@ -20,6 +20,7 @@ using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
+using static Robust.Shared.GameObjects.Components.Transform.TransformComponent;
 
 namespace Robust.Server.GameObjects
 {
@@ -201,8 +202,6 @@ namespace Robust.Server.GameObjects
         private readonly Dictionary<IPlayerSession, Dictionary<EntityUid, GameTick>> _playerLastSeen
             = new();
 
-        private static readonly Vector2 Vector2NaN = new(float.NaN, float.NaN);
-
         private Dictionary<EntityUid, GameTick> GetLastSeen(IPlayerSession player)
         {
             lock (_playerLastSeen)
@@ -366,6 +365,8 @@ namespace Robust.Server.GameObjects
             neededEnts.Clear();
             relatives.Clear();
 
+            var nullSpaceMapEntityId = _mapManager.GetMapEntityId(MapId.Nullspace);
+
             foreach (var uid in seenMovers.ToList())
             {
                 if (!TryGetEntity(uid, out var entity) || entity.Deleted)
@@ -411,15 +412,15 @@ namespace Robust.Server.GameObjects
                         {
                             // mover changed and can't be seen
                             var idx = Array.FindIndex(state.ComponentStates,
-                                x => x is TransformComponent.TransformComponentState);
+                                x => x is TransformComponentState);
 
                             if (idx != -1)
                             {
                                 // mover changed positional data and can't be seen
                                 var oldState =
-                                    (TransformComponent.TransformComponentState) state.ComponentStates[idx];
-                                var newState = new TransformComponent.TransformComponentState(Vector2NaN,
-                                    oldState.Rotation, oldState.ParentID);
+                                    (TransformComponentState) state.ComponentStates[idx];
+                                var newState =
+                                    new TransformComponentState(Vector2.Zero, oldState.Rotation, nullSpaceMapEntityId);
                                 state.ComponentStates[idx] = newState;
                                 seenMovers.Remove(uid);
                                 ClearLastSeenTick(lSeen, uid);
@@ -448,7 +449,7 @@ namespace Robust.Server.GameObjects
                     {
                         // mover can't be seen
                         var oldState =
-                            (TransformComponent.TransformComponentState) entity.Transform.GetComponentState();
+                            (TransformComponentState) entity.Transform.GetComponentState();
                         entityStates.Add(new EntityState(uid,
                             new ComponentChanged[]
                             {
@@ -456,8 +457,8 @@ namespace Robust.Server.GameObjects
                             },
                             new ComponentState[]
                             {
-                                new TransformComponent.TransformComponentState(Vector2NaN, oldState.Rotation,
-                                    oldState.ParentID)
+                                new TransformComponentState(Vector2.Zero, oldState.Rotation,
+                                    nullSpaceMapEntityId)
                             }));
 
                         seenMovers.Remove(uid);
@@ -598,7 +599,7 @@ namespace Robust.Server.GameObjects
                 seenMovers.Remove(uid);
                 ClearLastSeenTick(lSeen, uid);
 
-                var idx = Array.FindIndex(state.ComponentStates, x => x is TransformComponent.TransformComponentState);
+                var idx = Array.FindIndex(state.ComponentStates, x => x is TransformComponentState);
 
                 if (idx == -1)
                 {
@@ -606,9 +607,9 @@ namespace Robust.Server.GameObjects
                     continue;
                 }
 
-                var oldState = (TransformComponent.TransformComponentState) state.ComponentStates[idx];
+                var oldState = (TransformComponentState) state.ComponentStates[idx];
                 var newState =
-                    new TransformComponent.TransformComponentState(Vector2NaN, oldState.Rotation, oldState.ParentID);
+                    new TransformComponentState(Vector2.Zero, oldState.Rotation, nullSpaceMapEntityId);
                 state.ComponentStates[idx] = newState;
 
 
@@ -650,7 +651,7 @@ namespace Robust.Server.GameObjects
                     entityStates.Add(state);
 
                     var idx = Array.FindIndex(state.ComponentStates,
-                        x => x is TransformComponent.TransformComponentState);
+                        x => x is TransformComponentState);
 
                     if (idx == -1)
                     {
@@ -658,10 +659,9 @@ namespace Robust.Server.GameObjects
                         continue;
                     }
 
-                    var oldState = (TransformComponent.TransformComponentState) state.ComponentStates[idx];
+                    var oldState = (TransformComponentState) state.ComponentStates[idx];
                     var newState =
-                        new TransformComponent.TransformComponentState(Vector2NaN, oldState.Rotation,
-                            oldState.ParentID);
+                        new TransformComponentState(Vector2.Zero, oldState.Rotation, nullSpaceMapEntityId);
                     state.ComponentStates[idx] = newState;
                     seenMovers.Remove(uid);
 
