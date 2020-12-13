@@ -4,6 +4,7 @@ using System.Linq;
 using Robust.Client.Interfaces.GameObjects;
 using Robust.Shared.Exceptions;
 using Robust.Shared.GameObjects;
+using Robust.Shared.GameObjects.Components.Transform;
 using Robust.Shared.Interfaces.GameObjects;
 using Robust.Shared.Interfaces.Map;
 using Robust.Shared.IoC;
@@ -54,6 +55,12 @@ namespace Robust.Client.GameObjects
                     //Known entities
                     if (Entities.TryGetValue(es.Uid, out var entity))
                     {
+                        if (es.ComponentStates?.Any(s =>
+                            s is TransformComponent.TransformComponentState t &&
+                            (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y))) ?? false)
+                        {
+                            System.Console.WriteLine();
+                        }
                         toApply.Add(entity, (es, null));
                     }
                     else //Unknown entities
@@ -65,6 +72,12 @@ namespace Robust.Client.GameObjects
                             throw new InvalidOperationException($"Server sent new entity state for {es.Uid} without metadata component!");
                         }
                         var newEntity = CreateEntity(metaState.PrototypeId, es.Uid);
+                        if (es.ComponentStates?.Any(s =>
+                            s is TransformComponent.TransformComponentState t &&
+                            (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y))) ?? false)
+                        {
+                            System.Console.WriteLine();
+                        }
                         toApply.Add(newEntity, (es, null));
                         toInitialize.Add(newEntity);
                         created.Add(newEntity.Uid);
@@ -80,6 +93,12 @@ namespace Robust.Client.GameObjects
                     {
                         if (toApply.TryGetValue(entity, out var state))
                         {
+                            if (state.Item1?.ComponentStates?.Any(s =>
+                                s is TransformComponent.TransformComponentState t &&
+                                (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y))) ?? false)
+                            {
+                                System.Console.WriteLine();
+                            }
                             toApply[entity] = (state.Item1, es);
                         }
                         else
@@ -93,6 +112,12 @@ namespace Robust.Client.GameObjects
             // Make sure this is done after all entities have been instantiated.
             foreach (var kvStates in toApply)
             {
+                if (kvStates.Value.Item1?.ComponentStates?.Any(s =>
+                    s is TransformComponent.TransformComponentState t &&
+                    (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y))) ?? false)
+                {
+                    System.Console.WriteLine();
+                }
                 var ent = kvStates.Key;
                 var entity = (Entity) ent;
                 HandleEntityState(entity.EntityManager.ComponentManager, entity, kvStates.Value.Item1,

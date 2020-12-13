@@ -17,7 +17,7 @@ using Robust.Shared.ViewVariables;
 
 namespace Robust.Shared.GameObjects.Components.Transform
 {
-    internal class TransformComponent : Component, ITransformComponent, IComponentDebug
+    public class TransformComponent : Component, ITransformComponent, IComponentDebug
     {
         private EntityUid _parent;
         private Vector2 _localPosition; // holds offset from grid, or offset from parent
@@ -245,6 +245,10 @@ namespace Robust.Shared.GameObjects.Components.Transform
             }
             set
             {
+                if (Double.IsNaN(value.Position.X) || double.IsNaN(value.Position.Y))
+                {
+                    System.Console.WriteLine();
+                }
                 var oldPosition = Coordinates;
 
                 if (value.EntityId != _parent)
@@ -286,6 +290,10 @@ namespace Robust.Shared.GameObjects.Components.Transform
             get => _localPosition;
             set
             {
+                if (double.IsNaN(value.X) || double.IsNaN(value.Y))
+                {
+                    System.Console.WriteLine();
+                }
                 if (_localPosition.EqualsApprox(value, 0.00001))
                     return;
 
@@ -681,6 +689,10 @@ namespace Robust.Shared.GameObjects.Components.Transform
         /// <inheritdoc />
         public override ComponentState GetComponentState()
         {
+            if (Double.IsNaN(_localPosition.X) || double.IsNaN(_localPosition.Y))
+            {
+                System.Console.WriteLine();
+            }
             return new TransformComponentState(_localPosition, LocalRotation, _parent);
         }
 
@@ -759,6 +771,10 @@ namespace Robust.Shared.GameObjects.Components.Transform
         // Hooks for GodotTransformComponent go here.
         protected virtual void SetPosition(Vector2 position)
         {
+            if (double.IsNaN(position.X) || double.IsNaN(position.Y))
+            {
+                System.Console.WriteLine();
+            }
             _localPosition = position;
         }
 
@@ -828,7 +844,7 @@ namespace Robust.Shared.GameObjects.Components.Transform
         ///     Serialized state of a TransformComponent.
         /// </summary>
         [Serializable, NetSerializable]
-        protected internal class TransformComponentState : ComponentState
+        public class TransformComponentState : ComponentState
         {
             /// <summary>
             ///     Current parent entity of this entity.
@@ -854,6 +870,10 @@ namespace Robust.Shared.GameObjects.Components.Transform
             public TransformComponentState(Vector2 localPosition, Angle rotation, EntityUid parentId)
                 : base(NetIDs.TRANSFORM)
             {
+                if (double.IsNaN(localPosition.X) || double.IsNaN(localPosition.Y))
+                {
+                    System.Console.WriteLine();
+                }
                 LocalPosition = localPosition;
                 Rotation = rotation;
                 ParentID = parentId;

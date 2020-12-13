@@ -2,7 +2,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Robust.Shared.GameObjects;
+using Robust.Shared.GameObjects.Components.Transform;
 using Robust.Shared.GameStates;
+using Robust.Shared.Interfaces.GameObjects.Components;
 using Robust.Shared.Interfaces.Timing;
 using Robust.Shared.Log;
 using Robust.Shared.Timing;
@@ -188,6 +190,13 @@ namespace Robust.Client.GameStates
                     if (!_lastStateFullRep.TryGetValue(entityState.Uid, out var compData))
                     {
                         compData = new Dictionary<uint, ComponentState>();
+
+                        if (compData.Any(c =>
+                            c.Value is TransformComponent.TransformComponentState t &&
+                            (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y))))
+                        {
+                            System.Console.WriteLine();
+                        }
                         _lastStateFullRep.Add(entityState.Uid, compData);
                     }
 
@@ -383,6 +392,11 @@ namespace Robust.Client.GameStates
                 {
                     if (!fullRep.ContainsKey(netId))
                     {
+                        if (compState is TransformComponent.TransformComponentState t &&
+                            (double.IsNaN(t.LocalPosition.X) || double.IsNaN(t.LocalPosition.Y)))
+                        {
+                            System.Console.WriteLine();
+                        }
                         fullRep.Add(netId, compState);
                     }
                 }

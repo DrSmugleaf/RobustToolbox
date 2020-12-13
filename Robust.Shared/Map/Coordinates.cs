@@ -267,12 +267,20 @@ namespace Robust.Shared.Map
         {
             EntityId = entityId;
             Position = position;
+            if (double.IsNaN(position.X) || double.IsNaN(position.Y))
+            {
+                System.Console.WriteLine();
+            }
         }
 
         public EntityCoordinates(EntityUid entityId, float x, float y)
         {
             EntityId = entityId;
             Position = new Vector2(x, y);
+            if (double.IsNaN(x) || double.IsNaN(y))
+            {
+                System.Console.WriteLine();
+            }
         }
 
         /// <summary>
