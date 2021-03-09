@@ -380,11 +380,6 @@ namespace Robust.UnitTesting
         {
             private readonly ClientIntegrationOptions? _options;
 
-            private GameController.DisplayMode DisplayMode =>
-                _options == null
-                    ? GameController.DisplayMode.Headless
-                    : (GameController.DisplayMode) _options.Mode;
-
             internal ClientIntegrationInstance(ClientIntegrationOptions? options)
             {
                 _options = options;
@@ -414,7 +409,7 @@ namespace Robust.UnitTesting
                 try
                 {
                     IoCManager.InitThread(DependencyCollection);
-                    ClientIoC.RegisterIoC(DisplayMode);
+                    ClientIoC.RegisterIoC(GameController.DisplayMode.Headless);
                     IoCManager.Register<INetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IClientNetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IntegrationNetManager, IntegrationNetManager>(true);
@@ -456,7 +451,7 @@ namespace Robust.UnitTesting
                     var gameLoop = new IntegrationGameLoop(DependencyCollection.Resolve<IGameTiming>(),
                         _fromInstanceWriter, _toInstanceReader);
                     client.OverrideMainLoop(gameLoop);
-                    client.MainLoop(DisplayMode);
+                    client.MainLoop(GameController.DisplayMode.Headless);
                 }
                 catch (Exception e)
                 {
@@ -561,7 +556,6 @@ namespace Robust.UnitTesting
 
         public class ClientIntegrationOptions : IntegrationOptions
         {
-            public DisplayMode Mode { get; set; } = DisplayMode.Headless;
         }
 
         public abstract class IntegrationOptions

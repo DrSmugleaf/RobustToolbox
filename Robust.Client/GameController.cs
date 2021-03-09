@@ -388,10 +388,4 @@ namespace Robust.Client
             _clyde.Shutdown();
         }
     }
-
-    public enum DisplayMode : byte
-    {
-        Headless,
-        Clyde,
-    }
 }
