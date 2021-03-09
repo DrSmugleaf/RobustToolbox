@@ -19,7 +19,6 @@ using Robust.Shared.ContentPack;
 using Robust.Shared.IoC;
 using Robust.Shared.Network;
 using Robust.Shared.Timing;
-using FrameEventArgs = Robust.Shared.Timing.FrameEventArgs;
 using ServerProgram = Robust.Server.Program;
 
 namespace Robust.UnitTesting
@@ -381,6 +380,11 @@ namespace Robust.UnitTesting
         {
             private readonly ClientIntegrationOptions? _options;
 
+            private GameController.DisplayMode DisplayMode =>
+                _options == null
+                    ? GameController.DisplayMode.Headless
+                    : (GameController.DisplayMode) _options.Mode;
+
             internal ClientIntegrationInstance(ClientIntegrationOptions? options)
             {
                 _options = options;
@@ -410,7 +414,7 @@ namespace Robust.UnitTesting
                 try
                 {
                     IoCManager.InitThread(DependencyCollection);
-                    ClientIoC.RegisterIoC(GameController.DisplayMode.Headless);
+                    ClientIoC.RegisterIoC(DisplayMode);
                     IoCManager.Register<INetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IClientNetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IntegrationNetManager, IntegrationNetManager>(true);
@@ -452,7 +456,7 @@ namespace Robust.UnitTesting
                     var gameLoop = new IntegrationGameLoop(DependencyCollection.Resolve<IGameTiming>(),
                         _fromInstanceWriter, _toInstanceReader);
                     client.OverrideMainLoop(gameLoop);
-                    client.MainLoop(GameController.DisplayMode.Headless);
+                    client.MainLoop(DisplayMode);
                 }
                 catch (Exception e)
                 {
@@ -557,6 +561,7 @@ namespace Robust.UnitTesting
 
         public class ClientIntegrationOptions : IntegrationOptions
         {
+            public DisplayMode Mode { get; set; } = DisplayMode.Headless;
         }
 
         public abstract class IntegrationOptions
