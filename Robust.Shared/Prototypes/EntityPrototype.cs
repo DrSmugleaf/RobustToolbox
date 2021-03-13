@@ -8,6 +8,7 @@ using Robust.Shared.IoC;
 using Robust.Shared.Localization;
 using Robust.Shared.Log;
 using Robust.Shared.Maths;
+using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.Utility;
@@ -19,7 +20,7 @@ namespace Robust.Shared.Prototypes
     /// Prototype that represents game entities.
     /// </summary>
     [Prototype("entity", -1)]
-    public class EntityPrototype : IPrototype, IInheritingPrototype
+    public class EntityPrototype : IPrototype, IInheritingPrototype, ISerializationHooks
     {
         /// <summary>
         /// The "in code name" of the object. Must be unique.
@@ -33,7 +34,8 @@ namespace Robust.Shared.Prototypes
         /// </summary>
         [ViewVariables, CanBeNull]
         [DataField("name")]
-        public string Name {
+        public string Name
+        {
             get => _name;
             private set
             {
@@ -182,6 +184,23 @@ namespace Robust.Shared.Prototypes
             Components.Add("Transform", new TransformComponent());
             // And a metadata component too!
             Components.Add("MetaData", new MetaDataComponent());
+        }
+
+        void ISerializationHooks.AfterDeserialization()
+        {
+            var loc = IoCManager.Resolve<ILocalizationManager>();
+
+            if (loc.TryGetString($"ent-{CaseConversion.PascalToKebab(ID)}", out var name))
+            {
+                _nameModified = true;
+                Name = name;
+            }
+
+            if (loc.TryGetString($"ent-{CaseConversion.PascalToKebab(ID)}.desc", out var desc))
+            {
+                _descriptionModified = true;
+                Description = loc.GetString(desc);
+            }
         }
 
         public bool TryGetComponent<T>(string name, [NotNullWhen(true)] out T? component) where T : IComponent
