@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Robust.Client.Audio.Midi;
 using Robust.Client.Console;
 using Robust.Client.Debugging;
@@ -10,6 +10,7 @@ using Robust.Client.Input;
 using Robust.Client.Map;
 using Robust.Client.Placement;
 using Robust.Client.Player;
+using Robust.Client.Prototypes;
 using Robust.Client.Reflection;
 using Robust.Client.ResourceManagement;
 using Robust.Client.State;
@@ -17,13 +18,17 @@ using Robust.Client.UserInterface;
 using Robust.Client.Utility;
 using Robust.Client.ViewVariables;
 using Robust.Shared;
+using Robust.Shared.Console;
 using Robust.Shared.ContentPack;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
+using Robust.Shared.Players;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Reflection;
+using Robust.Shared.Serialization;
+using Robust.Shared.Serialization.Manager;
 
 namespace Robust.Client
 {
@@ -33,7 +38,7 @@ namespace Robust.Client
         {
             SharedIoC.RegisterIoC();
 
-            IoCManager.Register<IPrototypeManager, PrototypeManager>();
+            IoCManager.Register<IPrototypeManager, ClientPrototypeManager>();
             IoCManager.Register<IEntityManager, ClientEntityManager>();
             IoCManager.Register<IComponentFactory, ClientComponentFactory>();
             IoCManager.Register<ITileDefinitionManager, ClydeTileDefinitionManager>();
@@ -51,6 +56,7 @@ namespace Robust.Client
             IoCManager.Register<IClientGameStateManager, ClientGameStateManager>();
             IoCManager.Register<IBaseClient, BaseClient>();
             IoCManager.Register<IPlayerManager, PlayerManager>();
+            IoCManager.Register<ISharedPlayerManager, PlayerManager>();
             IoCManager.Register<IStateManager, StateManager>();
             IoCManager.Register<IUserInterfaceManager, UserInterfaceManager>();
             IoCManager.Register<IUserInterfaceManagerInternal, UserInterfaceManager>();
@@ -59,6 +65,7 @@ namespace Robust.Client
             IoCManager.Register<ILightManager, LightManager>();
             IoCManager.Register<IDiscordRichPresence, DiscordRichPresence>();
             IoCManager.Register<IClientConsoleHost, ClientConsoleHost>();
+            IoCManager.Register<IConsoleHost, ClientConsoleHost>();
             IoCManager.Register<IFontManager, FontManager>();
             IoCManager.Register<IFontManagerInternal, FontManager>();
             IoCManager.Register<IMidiManager, MidiManager>();
@@ -96,7 +103,6 @@ namespace Robust.Client
             IoCManager.Register<IViewVariablesManagerInternal, ViewVariablesManager>();
             IoCManager.Register<IClientConGroupController, ClientConGroupController>();
             IoCManager.Register<IScriptClient, ScriptClient>();
-            //IoCManager.Register<IXamlCompiler, XamlCompiler>();
         }
     }
 }

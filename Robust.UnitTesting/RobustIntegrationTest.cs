@@ -18,8 +18,8 @@ using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
 using Robust.Shared.IoC;
 using Robust.Shared.Network;
+using Robust.Shared.Prototypes;
 using Robust.Shared.Timing;
-using FrameEventArgs = Robust.Shared.Timing.FrameEventArgs;
 using ServerProgram = Robust.Server.Program;
 
 namespace Robust.UnitTesting
@@ -317,6 +317,8 @@ namespace Robust.UnitTesting
                 {
                     IoCManager.InitThread(DependencyCollection);
                     ServerIoC.RegisterIoC();
+                    IoCManager.Register<IPrototypeManager, IntegrationPrototypeManager>(true);
+                    IoCManager.Register<IIntegrationPrototypeManager, IntegrationPrototypeManager>();
                     IoCManager.Register<INetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IServerNetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IntegrationNetManager, IntegrationNetManager>(true);
@@ -350,6 +352,8 @@ namespace Robust.UnitTesting
                         {
                             IoCManager.Resolve<IResourceManagerInternal>()
                                 .MountString("/Prototypes/__integration_extra.yml", _options.ExtraPrototypes);
+
+                            IoCManager.Resolve<IIntegrationPrototypeManager>().QueueLoadString(_options.ExtraPrototypes);
                         }
                     }
 
@@ -411,6 +415,8 @@ namespace Robust.UnitTesting
                 {
                     IoCManager.InitThread(DependencyCollection);
                     ClientIoC.RegisterIoC(GameController.DisplayMode.Headless);
+                    IoCManager.Register<IPrototypeManager, IntegrationPrototypeManager>(true);
+                    IoCManager.Register<IIntegrationPrototypeManager, IntegrationPrototypeManager>();
                     IoCManager.Register<INetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IClientNetManager, IntegrationNetManager>(true);
                     IoCManager.Register<IntegrationNetManager, IntegrationNetManager>(true);
@@ -442,6 +448,8 @@ namespace Robust.UnitTesting
                         {
                             IoCManager.Resolve<IResourceManagerInternal>()
                                 .MountString("/Prototypes/__integration_extra.yml", _options.ExtraPrototypes);
+
+                            IoCManager.Resolve<IIntegrationPrototypeManager>().QueueLoadString(_options.ExtraPrototypes);
                         }
                     }
 

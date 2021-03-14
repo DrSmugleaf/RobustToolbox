@@ -21,6 +21,7 @@ namespace Robust.Client.Graphics.Clyde
         public IRenderWindow MainWindowRenderTarget { get; }
         public override Vector2i ScreenSize { get; } = (1280, 720);
         public Vector2 DefaultWindowScale => (1, 1);
+        public override bool IsFocused => true;
 
         public ShaderInstance InstanceShader(ClydeHandle handle)
         {
@@ -74,6 +75,12 @@ namespace Robust.Client.Graphics.Clyde
         }
 
         public override event Action<WindowResizedEventArgs> OnWindowResized
+        {
+            add { }
+            remove { }
+        }
+
+        public override event Action<WindowFocusedEventArgs> OnWindowFocused
         {
             add { }
             remove { }
@@ -257,6 +264,11 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             public void SetPlaybackPosition(float seconds)
+            {
+                // Nada.
+            }
+
+            public void SetVelocity(Vector2 velocity)
             {
                 // Nada.
             }

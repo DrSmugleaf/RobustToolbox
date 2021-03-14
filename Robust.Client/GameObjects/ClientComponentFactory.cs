@@ -1,4 +1,5 @@
-﻿using Robust.Shared.GameObjects;
+using Robust.Shared.Containers;
+using Robust.Shared.GameObjects;
 using Robust.Shared.Physics;
 
 namespace Robust.Client.GameObjects
@@ -23,9 +24,13 @@ namespace Robust.Client.GameObjects
 
             Register<PhysicsComponent>();
             RegisterReference<PhysicsComponent, IPhysBody>();
-            RegisterReference<PhysicsComponent, IPhysicsComponent>();
+
+            Register<CollisionWakeComponent>();
+
+            Register<ContainerManagerComponent>();
+            RegisterReference<ContainerManagerComponent, IContainerManager>();
+
             RegisterIgnore("KeyBindingInput");
-            Register<PointLightComponent>();
 
             Register<InputComponent>();
 
@@ -50,14 +55,10 @@ namespace Robust.Client.GameObjects
 
             Register<AnimationPlayerComponent>();
 
-            Register<ContainerManagerComponent>();
-            RegisterReference<ContainerManagerComponent, IContainerManager>();
-
             Register<TimerComponent>();
 
 #if DEBUG
             Register<DebugExceptionOnAddComponent>();
-            Register<DebugExceptionExposeDataComponent>();
             Register<DebugExceptionInitializeComponent>();
             Register<DebugExceptionStartupComponent>();
 #endif

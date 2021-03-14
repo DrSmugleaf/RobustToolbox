@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -65,10 +65,20 @@ namespace Robust.Shared.GameObjects
         private readonly HashSet<string> IgnoredComponentNames = new();
 
         /// <inheritdoc />
+        public event Action<IComponentRegistration>? ComponentAdded;
+
+        /// <inheritdoc />
+        public event Action<(IComponentRegistration, Type)>? ComponentReferenceAdded;
+
+        /// <inheritdoc />
+        public event Action<string>? ComponentIgnoreAdded;
+        
+        /// <inheritdoc />
         public IEnumerable<Type> AllRegisteredTypes => types.Keys;
 
         private IEnumerable<ComponentRegistration> AllRegistrations => types.Values;
 
+        [Obsolete("Use RegisterClass and Attributes instead of the Register/RegisterReference combo")]
         public void Register<T>(bool overwrite = false) where T : IComponent, new()
         {
             Register(typeof(T), overwrite);
@@ -136,8 +146,10 @@ namespace Robust.Shared.GameObjects
             {
                 netIDs[netID.Value] = registration;
             }
+            ComponentAdded?.Invoke(registration);
         }
 
+        [Obsolete("Use RegisterClass and Attributes instead of the Register/RegisterReference combo")]
         public void RegisterReference<TTarget, TInterface>() where TTarget : TInterface, IComponent, new()
         {
             RegisterReference(typeof(TTarget), typeof(TInterface));
@@ -156,6 +168,7 @@ namespace Robust.Shared.GameObjects
                 throw new InvalidOperationException($"Attempted to register a reference twice: {@interface}");
             }
             registration.References.Add(@interface);
+            ComponentReferenceAdded?.Invoke((registration, @interface));
         }
 
         public void RegisterIgnore(string name, bool overwrite = false)
@@ -176,12 +189,13 @@ namespace Robust.Shared.GameObjects
             }
 
             IgnoredComponentNames.Add(name);
+            ComponentIgnoreAdded?.Invoke(name);
         }
 
         private void RemoveComponent(string name)
         {
             var registration = names[name];
-
+            
             names.Remove(registration.Name);
             _lowerCaseNames.Remove(registration.Name.ToLowerInvariant());
             types.Remove(registration.Type);
@@ -348,32 +362,42 @@ namespace Robust.Shared.GameObjects
 
         public void DoAutoRegistrations()
         {
-            var iComponent = typeof(IComponent);
-
             foreach (var type in _reflectionManager.FindTypesWithAttribute<RegisterComponentAttribute>())
             {
-                if (!iComponent.IsAssignableFrom(type))
+                RegisterClass(type);
+            }
+        }
+
+        /// <inheritdoc />
+        public void RegisterClass<T>(bool overwrite = false)
+            where T : IComponent, new()
+        {
+            RegisterClass(typeof(T));
+        }
+
+        private void RegisterClass(Type type)
+        {
+            if (!typeof(IComponent).IsAssignableFrom(type))
+            {
+                Logger.Error("Type {0} has RegisterComponentAttribute but does not implement IComponent.", type);
+                return;
+            }
+
+            Register(type);
+
+            foreach (var attribute in Attribute.GetCustomAttributes(type, typeof(ComponentReferenceAttribute)))
+            {
+                var cast = (ComponentReferenceAttribute) attribute;
+
+                var refType = cast.ReferenceType;
+
+                if (!refType.IsAssignableFrom(type))
                 {
-                    Logger.Error("Type {0} has RegisterComponentAttribute but does not implement IComponent.", type);
+                    Logger.Error("Type {0} has reference for type it does not implement: {1}.", type, refType);
                     continue;
                 }
 
-                Register(type);
-
-                foreach (var attribute in Attribute.GetCustomAttributes(type, typeof(ComponentReferenceAttribute)))
-                {
-                    var cast = (ComponentReferenceAttribute) attribute;
-
-                    var refType = cast.ReferenceType;
-
-                    if (!refType.IsAssignableFrom(type))
-                    {
-                        Logger.Error("Type {0} has reference for type it does not implement: {1}.", type, refType);
-                        continue;
-                    }
-
-                    RegisterReference(type, refType);
-                }
+                RegisterReference(type, refType);
             }
         }
 

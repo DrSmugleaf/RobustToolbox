@@ -1,17 +1,25 @@
-﻿using Robust.Shared.GameObjects;
+using Robust.Shared.GameObjects;
 using Robust.Shared.Maths;
+using Robust.Shared.Prototypes;
 using Robust.Shared.Players;
 using Robust.Shared.Serialization;
+using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.ViewVariables;
 
 namespace Robust.Server.GameObjects
 {
-    public class PointLightComponent : Component
+    [RegisterComponent]
+    [ComponentReference(typeof(IPointLightComponent))]
+    public class PointLightComponent : Component, IPointLightComponent
     {
-        private Color _color;
-        private bool _enabled;
-        private float _radius;
-        private Vector2 _offset;
+        [DataField("color")]
+        private Color _color = new(200, 200, 200);
+        [DataField("enabled")]
+        private bool _enabled = true;
+        [DataField("radius")]
+        private float _radius = 10;
+        [DataField("offset")]
+        private Vector2 _offset = Vector2.Zero;
 
         public override string Name => "PointLight";
         public override uint? NetID => NetIDs.POINT_LIGHT;
@@ -41,6 +49,14 @@ namespace Robust.Server.GameObjects
             }
         }
 
+        public bool ContainerOccluded { get; set; }
+        public bool MaskAutoRotate { get; set; }
+        public Angle Rotation { get; set; }
+        public string? MaskPath { get; set; }
+        public float Energy { get; set; }
+        public float Softness { get; set; }
+        public bool VisibleNested { get; set; }
+
         [ViewVariables(VVAccess.ReadWrite)]
         public float Radius
         {
@@ -61,17 +77,6 @@ namespace Robust.Server.GameObjects
                 _offset = value;
                 Dirty();
             }
-        }
-
-        /// <inheritdoc />
-        public override void ExposeData(ObjectSerializer serializer)
-        {
-            base.ExposeData(serializer);
-
-            serializer.DataField(ref _enabled, "enabled", true);
-            serializer.DataField(ref _color, "color", new Color(200, 200, 200));
-            serializer.DataField(ref _radius, "radius", 10);
-            serializer.DataField(ref _offset, "offset", Vector2.Zero);
         }
 
         public override ComponentState GetComponentState(ICommonSession player)

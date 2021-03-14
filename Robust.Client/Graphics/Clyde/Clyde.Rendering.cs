@@ -280,7 +280,7 @@ namespace Robust.Client.Graphics.Clyde
         }
 
         /// <summary>
-        ///     Flush the render handle, processing and re-pooling all the command lists.
+        ///     Flushes the render handle, processing and re-pooling all the command lists.
         /// </summary>
         private void FlushRenderQueue()
         {
@@ -371,6 +371,7 @@ namespace Robust.Client.Graphics.Clyde
 
             program.Use();
 
+            int textureUnitVal = 0;
             // Assign shader parameters to uniform since they may be dirty.
             foreach (var (name, value) in instance.Parameters)
             {
@@ -412,6 +413,15 @@ namespace Robust.Client.Graphics.Clyde
                         break;
                     case Matrix4 matrix4:
                         program.SetUniform(name, matrix4);
+                        break;
+                    case ClydeTexture clydeTexture:
+                        //It's important to start at Texture6 here since DrawCommandBatch uses Texture0 and Texture1 immediately after calling this
+                        //function! If passing in textures as uniforms ever stops working it might be since someone made it use all the way up to Texture6 too.
+                        //Might change this in the future?
+                        TextureUnit cTarget = TextureUnit.Texture6+textureUnitVal;
+                        SetTexture(cTarget, ((ClydeTexture)clydeTexture).TextureId);
+                        program.SetUniformTexture(name, cTarget);
+                        textureUnitVal++;
                         break;
                     default:
                         throw new InvalidOperationException($"Unable to handle shader parameter {name}: {value}");
@@ -477,10 +487,20 @@ namespace Robust.Client.Graphics.Clyde
             _currentMatrixView = view;
         }
 
+        /// <summary>
+        /// Draws a texture quad to the screen.
+        /// </summary>
+        /// <param name="texture">Texture to draw.</param>
+        /// <param name="bl">Bottom left vertex of the quad in object space.</param>
+        /// <param name="br">Bottom right vertex of the quad in object space.</param>
+        /// <param name="tl">Top left vertex of the quad in object space.</param>
+        /// <param name="tr">Top right vertex of the quad in object space.</param>
+        /// <param name="modulate">A color to multiply the texture by when shading.</param>
+        /// <param name="texCoords">The four corners of the texture coordinates, matching the four vertices.</param>
         private void DrawTexture(ClydeHandle texture, Vector2 bl, Vector2 br, Vector2 tl, Vector2 tr, in Color modulate,
-            in Box2 sr)
+            in Box2 texCoords)
         {
-            EnsureBatchState(texture, modulate, true, GetQuadBatchPrimitiveType(), _queuedShader);
+            EnsureBatchState(texture, in modulate, true, GetQuadBatchPrimitiveType(), _queuedShader);
 
             bl = _currentMatrixModel.Transform(bl);
             br = _currentMatrixModel.Transform(br);
@@ -489,10 +509,10 @@ namespace Robust.Client.Graphics.Clyde
 
             // TODO: split batch if necessary.
             var vIdx = BatchVertexIndex;
-            BatchVertexData[vIdx + 0] = new Vertex2D(bl, sr.BottomLeft);
-            BatchVertexData[vIdx + 1] = new Vertex2D(br, sr.BottomRight);
-            BatchVertexData[vIdx + 2] = new Vertex2D(tr, sr.TopRight);
-            BatchVertexData[vIdx + 3] = new Vertex2D(tl, sr.TopLeft);
+            BatchVertexData[vIdx + 0] = new Vertex2D(bl, texCoords.BottomLeft);
+            BatchVertexData[vIdx + 1] = new Vertex2D(br, texCoords.BottomRight);
+            BatchVertexData[vIdx + 2] = new Vertex2D(tr, texCoords.TopRight);
+            BatchVertexData[vIdx + 3] = new Vertex2D(tl, texCoords.TopLeft);
             BatchVertexIndex += 4;
             QuadBatchIndexWrite(BatchIndexData, ref BatchIndexIndex, (ushort) vIdx);
 

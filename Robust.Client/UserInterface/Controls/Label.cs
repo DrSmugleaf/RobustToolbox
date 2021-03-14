@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using Robust.Client.Graphics;
 using Robust.Shared.Animations;
 using Robust.Shared.Maths;
@@ -26,7 +27,7 @@ namespace Robust.Client.UserInterface.Controls
 
         public Label()
         {
-            SizeFlagsVertical = SizeFlags.ShrinkCenter;
+            VerticalAlignment = VAlignment.Center;
         }
 
         /// <summary>
@@ -40,7 +41,7 @@ namespace Robust.Client.UserInterface.Controls
             {
                 _text = value;
                 _textDimensionCacheValid = false;
-                MinimumSizeChanged();
+                InvalidateMeasure();
             }
         }
 
@@ -52,7 +53,7 @@ namespace Robust.Client.UserInterface.Controls
             {
                 _clipText = value;
                 RectClipContent = value;
-                MinimumSizeChanged();
+                InvalidateMeasure();
             }
         }
 
@@ -180,15 +181,15 @@ namespace Robust.Client.UserInterface.Controls
 
             var baseLine = CalcBaseline();
 
-            foreach (var chr in _text)
+            foreach (var rune in _text.EnumerateRunes())
             {
-                if (chr == '\n')
+                if (rune == new Rune('\n'))
                 {
                     newlines += 1;
                     baseLine = CalcBaseline();
                 }
 
-                var advance = font.DrawChar(handle, chr, baseLine, UIScale, actualFontColor);
+                var advance = font.DrawChar(handle, rune, baseLine, UIScale, actualFontColor);
                 baseLine += (advance, 0);
             }
         }
@@ -209,7 +210,7 @@ namespace Robust.Client.UserInterface.Controls
             Fill = 3
         }
 
-        protected override Vector2 CalculateMinimumSize()
+        protected override Vector2 MeasureOverride(Vector2 availableSize)
         {
             if (!_textDimensionCacheValid)
             {
@@ -252,22 +253,22 @@ namespace Robust.Client.UserInterface.Controls
 
             var font = ActualFont;
             var height = font.GetHeight(UIScale);
-            foreach (var chr in _text)
+            foreach (var rune in _text.EnumerateRunes())
             {
-                if (chr == '\n')
+                if (rune == new Rune('\n'))
                 {
                     _cachedTextWidths.Add(0);
                     height += font.GetLineHeight(UIScale);
                 }
                 else
                 {
-                    var metrics = font.GetCharMetrics(chr, UIScale);
+                    var metrics = font.GetCharMetrics(rune, UIScale);
                     if (metrics == null)
                     {
                         continue;
                     }
 
-                    _cachedTextWidths[_cachedTextWidths.Count-1] += metrics.Value.Advance;
+                    _cachedTextWidths[^1] += metrics.Value.Advance;
                 }
             }
 

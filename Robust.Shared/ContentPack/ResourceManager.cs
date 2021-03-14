@@ -135,7 +135,7 @@ namespace Robust.Shared.ContentPack
                 throw new DirectoryNotFoundException("Specified directory does not exist: " + pathInfo.FullName);
             }
 
-            var loader = new DirLoader(pathInfo, Logger.GetSawmill("res"));
+            var loader = new DirLoader(pathInfo, Logger.GetSawmill("res"), _config.GetCVar(CVars.ResCheckPathCasing));
             AddRoot(prefix, loader);
         }
 
@@ -303,6 +303,17 @@ namespace Robust.Shared.ContentPack
         {
             var loader = new SingleStreamLoader(stream, path.ToRelativePath());
             AddRoot(ResourcePath.Root, loader);
+        }
+
+        public IEnumerable<ResourcePath> GetContentRoots()
+        {
+            foreach (var (_, root) in _contentRoots)
+            {
+                if (root is DirLoader loader)
+                {
+                    yield return new ResourcePath(loader.GetPath(new ResourcePath(@"/")));
+                }
+            }
         }
 
         internal static bool IsPathValid(ResourcePath path)

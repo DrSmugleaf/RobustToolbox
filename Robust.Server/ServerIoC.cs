@@ -10,16 +10,18 @@ using Robust.Server.Prototypes;
 using Robust.Server.Reflection;
 using Robust.Server.Scripting;
 using Robust.Server.ServerStatus;
-using Robust.Server.Timing;
 using Robust.Server.ViewVariables;
 using Robust.Shared;
+using Robust.Shared.Console;
 using Robust.Shared.ContentPack;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
+using Robust.Shared.Players;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Reflection;
+using Robust.Shared.Timing;
 
 namespace Robust.Server
 {
@@ -37,13 +39,14 @@ namespace Robust.Server
             IoCManager.Register<IComponentFactory, ServerComponentFactory>();
             IoCManager.Register<IConGroupController, ConGroupController>();
             IoCManager.Register<IServerConsoleHost, ServerConsoleHost>();
+            IoCManager.Register<IConsoleHost, ServerConsoleHost>();
             IoCManager.Register<IEntityManager, ServerEntityManager>();
             IoCManager.Register<IEntityNetworkManager, ServerEntityNetworkManager>();
             IoCManager.Register<IServerEntityNetworkManager, ServerEntityNetworkManager>();
             IoCManager.Register<IMapLoader, MapLoader>();
-            IoCManager.Register<IPauseManager, PauseManager>();
             IoCManager.Register<IPlacementManager, PlacementManager>();
             IoCManager.Register<IPlayerManager, PlayerManager>();
+            IoCManager.Register<ISharedPlayerManager, PlayerManager>();
             IoCManager.Register<IPrototypeManager, ServerPrototypeManager>();
             IoCManager.Register<IReflectionManager, ServerReflectionManager>();
             IoCManager.Register<IResourceManager, ResourceManager>();

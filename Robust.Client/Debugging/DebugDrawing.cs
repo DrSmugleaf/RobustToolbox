@@ -1,12 +1,16 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.ResourceManagement;
+using Robust.Shared.Enums;
+using Robust.Shared;
+using Robust.Shared.Configuration;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Maths;
 using Robust.Shared.Physics;
+using Robust.Shared.Physics.Broadphase;
 using Robust.Shared.Prototypes;
 
 namespace Robust.Client.Debugging
@@ -38,14 +42,14 @@ namespace Robust.Client.Debugging
 
                 _debugColliders = value;
 
-                if (value)
+                if (value && !_overlayManager.HasOverlay<PhysicsOverlay>())
                 {
                     _overlayManager.AddOverlay(new PhysicsOverlay(_componentManager, _eyeManager,
                         _prototypeManager, _inputManager, _physicsManager));
                 }
                 else
                 {
-                    _overlayManager.RemoveOverlay(nameof(PhysicsOverlay));
+                    _overlayManager.RemoveOverlay<PhysicsOverlay>();
                 }
             }
         }
@@ -63,13 +67,13 @@ namespace Robust.Client.Debugging
 
                 _debugPositions = value;
 
-                if (value)
+                if (value && !_overlayManager.HasOverlay<EntityPositionOverlay>())
                 {
                     _overlayManager.AddOverlay(new EntityPositionOverlay(_entityManager, _eyeManager));
                 }
                 else
                 {
-                    _overlayManager.RemoveOverlay(nameof(EntityPositionOverlay));
+                    _overlayManager.RemoveOverlay<EntityPositionOverlay>();
                 }
             }
         }
@@ -88,8 +92,8 @@ namespace Robust.Client.Debugging
             private Vector2 _hoverStartScreen = Vector2.Zero;
             private List<IPhysBody> _hoverBodies = new();
 
+
             public PhysicsOverlay(IComponentManager compMan, IEyeManager eyeMan, IPrototypeManager protoMan, IInputManager inputManager, IPhysicsManager physicsManager)
-                : base(nameof(PhysicsOverlay))
             {
                 _componentManager = compMan;
                 _eyeManager = eyeMan;
@@ -136,7 +140,7 @@ namespace Robust.Client.Debugging
                     row++;
                     DrawString(screenHandle, _font, drawPos + new Vector2(0, row * lineHeight), $"Mask: {Convert.ToString(body.CollisionMask, 2)}");
                     row++;
-                    DrawString(screenHandle, _font, drawPos + new Vector2(0, row * lineHeight), $"Enabled: {body.CanCollide}, Hard: {body.Hard}, Anchored: {((IPhysicsComponent)body).Anchored}");
+                    DrawString(screenHandle, _font, drawPos + new Vector2(0, row * lineHeight), $"Enabled: {body.CanCollide}, Hard: {body.Hard}, Anchored: {(body).BodyType == BodyType.Static}");
                     row++;
                 }
 
@@ -158,19 +162,22 @@ namespace Robust.Client.Debugging
 
                 var mapId = _eyeManager.CurrentMap;
 
-                foreach (var physBody in _physicsManager.GetCollidingEntities(mapId, viewport))
+                foreach (var physBody in EntitySystem.Get<SharedBroadPhaseSystem>().GetCollidingEntities(mapId, viewport))
                 {
                     // all entities have a TransformComponent
                     var transform = physBody.Entity.Transform;
 
-                    var worldBox = physBody.WorldAABB;
+                    var worldBox = physBody.GetWorldAABB();
                     if (worldBox.IsEmpty()) continue;
 
                     var colorEdge = Color.Red.WithAlpha(0.33f);
+                    var sleepThreshold = IoCManager.Resolve<IConfigurationManager>().GetCVar(CVars.TimeToSleep);
 
-                    foreach (var shape in physBody.PhysicsShapes)
+                    foreach (var fixture in physBody.Fixtures)
                     {
-                        shape.DebugDraw(drawing, transform.WorldMatrix, in viewport, physBody.SleepAccumulator / (float) physBody.SleepThreshold);
+                        var shape = fixture.Shape;
+                        var sleepPercent = physBody.Awake ? physBody.SleepTime / sleepThreshold : 1.0f;
+                        shape.DebugDraw(drawing, transform.WorldMatrix, in viewport,  sleepPercent);
                     }
 
                     if (worldBox.Contains(mouseWorldPos))
@@ -187,9 +194,9 @@ namespace Robust.Client.Debugging
             {
                 var baseLine = new Vector2(pos.X, font.GetAscent(1) + pos.Y);
 
-                foreach (var chr in str)
+                foreach (var rune in str.EnumerateRunes())
                 {
-                    var advance = font.DrawChar(handle, chr, baseLine, 1, Color.White);
+                    var advance = font.DrawChar(handle, rune, baseLine, 1, Color.White);
                     baseLine += new Vector2(advance, 0);
                 }
             }
@@ -233,6 +240,16 @@ namespace Robust.Client.Debugging
                     _handle.DrawCircle(origin, radius, color);
                 }
 
+                public override void DrawPolygonShape(Vector2[] vertices, in Color color)
+                {
+                    _handle.DrawPrimitives(DrawPrimitiveTopology.TriangleFan, vertices, color);
+                }
+
+                public override void DrawLine(Vector2 start, Vector2 end, in Color color)
+                {
+                    _handle.DrawLine(start, end, color);
+                }
+
                 public override void SetTransform(in Matrix3 transform)
                 {
                     _handle.SetTransform(transform);
@@ -249,7 +266,7 @@ namespace Robust.Client.Debugging
 
             public override OverlaySpace Space => OverlaySpace.WorldSpace;
 
-            public EntityPositionOverlay(IEntityManager entityManager, IEyeManager eyeManager) : base(nameof(EntityPositionOverlay))
+            public EntityPositionOverlay(IEntityManager entityManager, IEyeManager eyeManager)
             {
                 _entityManager = entityManager;
                 _eyeManager = eyeManager;

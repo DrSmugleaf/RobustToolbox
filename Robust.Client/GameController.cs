@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net;
 using System.Threading.Tasks;
+using Robust.Client.Audio.Midi;
 using Robust.Client.Console;
 using Robust.Client.GameObjects;
 using Robust.Client.GameStates;
@@ -26,7 +27,7 @@ using Robust.Shared.Map;
 using Robust.Shared.Network;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization;
-using Robust.Shared.Timers;
+using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 
@@ -44,7 +45,7 @@ namespace Robust.Client
         [Dependency] private readonly IUserInterfaceManagerInternal _userInterfaceManager = default!;
         [Dependency] private readonly IBaseClient _client = default!;
         [Dependency] private readonly IInputManager _inputManager = default!;
-        [Dependency] private readonly IClientConsoleHost _consoleHost = default!;
+        [Dependency] private readonly IClientConsoleHost _console = default!;
         [Dependency] private readonly ITimerManager _timerManager = default!;
         [Dependency] private readonly IClientEntityManager _entityManager = default!;
         [Dependency] private readonly IPlacementManager _placementManager = default!;
@@ -62,6 +63,7 @@ namespace Robust.Client
         [Dependency] private readonly IPlayerManager _playerManager = default!;
         [Dependency] private readonly IRobustMappedStringSerializer _stringSerializer = default!;
         [Dependency] private readonly IAuthManager _authManager = default!;
+        [Dependency] private readonly IMidiManager _midiManager = default!;
 
         private CommandLineArgs? _commandLineArgs;
         private bool _disableAssemblyLoadContext;
@@ -117,6 +119,8 @@ namespace Robust.Client
                 _configurationManager.OverrideConVars(_commandLineArgs.CVars);
             }
 
+            ProfileOptSetup.Setup(_configurationManager);
+
             _resourceCache.Initialize(LoadConfigAndUserData ? userDataDir : null);
 
             ProgramShared.DoMounts(_resourceCache, _commandLineArgs?.MountOptions, "Content.Client", _loaderArgs != null);
@@ -153,16 +157,20 @@ namespace Robust.Client
                 _configurationManager.LoadCVarsFromAssembly(loadedModule);
             }
 
+            IoCManager.Resolve<ISerializationManager>().Initialize();
+
             // Call Init in game assemblies.
             _modLoader.BroadcastRunLevel(ModRunLevel.PreInit);
             _modLoader.BroadcastRunLevel(ModRunLevel.Init);
 
+            _resourceCache.PreloadTextures();
             _userInterfaceManager.Initialize();
             _networkManager.Initialize(false);
             IoCManager.Resolve<INetConfigurationManager>().SetupNetworking();
             _serializer.Initialize();
             _inputManager.Initialize();
-            _consoleHost.Initialize();
+            _console.Initialize();
+            _prototypeManager.Initialize();
             _prototypeManager.LoadDirectory(new ResourcePath(@"/Prototypes/"));
             _prototypeManager.Resync();
             _mapManager.Initialize();
@@ -182,6 +190,8 @@ namespace Robust.Client
             }
 
             _authManager.LoadFromEnv();
+
+            GC.Collect();
 
             _clyde.Ready();
 
@@ -318,6 +328,7 @@ namespace Robust.Client
             logManager.GetSawmill("discord").Level = LogLevel.Warning;
             logManager.GetSawmill("net.predict").Level = LogLevel.Info;
             logManager.GetSawmill("szr").Level = LogLevel.Info;
+            logManager.GetSawmill("loc").Level = LogLevel.Error;
 
 #if DEBUG_ONLY_FCE_INFO
 #if DEBUG_ONLY_FCE_LOG
@@ -376,6 +387,8 @@ namespace Robust.Client
 
         private void Cleanup()
         {
+            _networkManager.Shutdown("Client shutting down");
+            _midiManager.Shutdown();
             _entityManager.Shutdown();
             _clyde.Shutdown();
         }

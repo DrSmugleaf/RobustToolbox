@@ -13,6 +13,7 @@ using Lidgren.Network;
 using Newtonsoft.Json;
 using Robust.Shared.Log;
 using Robust.Shared.Network.Messages;
+using Robust.Shared.Network.Messages.Handshake;
 using Robust.Shared.Utility;
 
 namespace Robust.Shared.Network
@@ -204,7 +205,7 @@ namespace Robust.Shared.Network
             var msgSuc = new MsgLoginSuccess();
             msgSuc.ReadFromBuffer(response);
 
-            var channel = new NetChannel(this, connection, new NetUserId(msgSuc.UserId), msgSuc.UserName, msgSuc.Type);
+            var channel = new NetChannel(this, connection, msgSuc.UserData, msgSuc.Type);
             _channels.Add(connection, channel);
             peer.AddChannel(channel);
 
