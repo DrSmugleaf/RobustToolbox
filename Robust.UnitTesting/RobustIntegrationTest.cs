@@ -500,8 +500,6 @@ namespace Robust.UnitTesting
                 _channelWriter.TryWrite(new AckTicksMessage(1));
                 Running = true;
 
-                Tick += (a, b) => Console.WriteLine("tick: {0}", _gameTiming.CurTick);
-
                 _gameTiming.InSimulation = true;
 
                 while (Running)

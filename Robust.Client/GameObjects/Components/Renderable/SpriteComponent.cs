@@ -19,6 +19,7 @@ using Robust.Shared.Reflection;
 using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Serialization.Manager.Attributes;
+using Robust.Shared.Serialization.TypeSerializers.Implementations.Custom;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
@@ -36,13 +37,13 @@ namespace Robust.Client.GameObjects
         private bool _visible = true;
 
         [ViewVariables(VVAccess.ReadWrite)]
-        public bool Visible
+        public override bool Visible
         {
             get => _visible;
             set => _visible = value;
         }
 
-        [DataFieldWithConstant("drawdepth", typeof(DrawDepthTag))]
+        [DataField("drawdepth", customTypeSerializer: typeof(ConstantSerializer<DrawDepthTag>))]
         private int drawDepth = DrawDepthTag.Default;
 
         /// <summary>

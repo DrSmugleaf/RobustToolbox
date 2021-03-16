@@ -25,12 +25,26 @@ namespace Robust.Shared.Serialization.Manager
         private readonly Dictionary<Type, Type> _genericCopierTypes = new();
         private readonly Dictionary<(Type Type, Type DataNodeType), Type> _genericValidatorTypes = new();
 
+        private readonly Dictionary<Type, object> _customTypeSerializers = new();
+
         private void InitializeTypeSerializers()
         {
             foreach (var type in _reflectionManager.FindTypesWithAttribute<TypeSerializerAttribute>())
             {
                 RegisterSerializer(type);
             }
+        }
+
+        private object GetTypeSerializer(Type type)
+        {
+            if (type.IsGenericTypeDefinition)
+                throw new ArgumentException("TypeSerializer cannot be TypeDefinition!", nameof(type));
+
+            if (_customTypeSerializers.TryGetValue(type, out var obj)) return obj;
+
+            obj = Activator.CreateInstance(type)!;
+            _customTypeSerializers[type] = obj;
+            return obj;
         }
 
         private object? RegisterSerializer(Type type)
@@ -55,55 +69,55 @@ namespace Robust.Shared.Serialization.Manager
                 foreach (var writerInterface in writerInterfaces)
                 {
                     if (!_genericWriterTypes.TryAdd(writerInterface.GetGenericArguments()[0], type))
-                        Logger.Error(LogCategory, $"Tried registering generic writer for type {writerInterface.GetGenericArguments()[0]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering generic writer for type {writerInterface.GetGenericArguments()[0]} twice");
                 }
 
                 foreach (var readerInterface in readerInterfaces)
                 {
                     if (!_genericReaderTypes.TryAdd((readerInterface.GetGenericArguments()[0], readerInterface.GetGenericArguments()[1]), type))
-                        Logger.Error(LogCategory, $"Tried registering generic reader for type {readerInterface.GetGenericArguments()[0]} and datanode {readerInterface.GetGenericArguments()[1]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering generic reader for type {readerInterface.GetGenericArguments()[0]} and datanode {readerInterface.GetGenericArguments()[1]} twice");
                 }
 
                 foreach (var copierInterface in copierInterfaces)
                 {
                     if (!_genericCopierTypes.TryAdd(copierInterface.GetGenericArguments()[0], type))
-                        Logger.Error(LogCategory, $"Tried registering generic copier for type {copierInterface.GetGenericArguments()[0]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering generic copier for type {copierInterface.GetGenericArguments()[0]} twice");
                 }
 
                 foreach (var validatorInterface in validatorInterfaces)
                 {
                     if (!_genericValidatorTypes.TryAdd((validatorInterface.GetGenericArguments()[0], validatorInterface.GetGenericArguments()[1]), type))
-                        Logger.Error(LogCategory, $"Tried registering generic reader for type {validatorInterface.GetGenericArguments()[0]} and datanode {validatorInterface.GetGenericArguments()[1]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering generic reader for type {validatorInterface.GetGenericArguments()[0]} and datanode {validatorInterface.GetGenericArguments()[1]} twice");
                 }
 
                 return null;
             }
             else
             {
-                var serializer = Activator.CreateInstance(type)!;
+                var serializer = GetTypeSerializer(type);
 
                 foreach (var writerInterface in writerInterfaces)
                 {
                     if (!_typeWriters.TryAdd(writerInterface.GetGenericArguments()[0], serializer))
-                        Logger.Error(LogCategory, $"Tried registering writer for type {writerInterface.GetGenericArguments()[0]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering writer for type {writerInterface.GetGenericArguments()[0]} twice");
                 }
 
                 foreach (var readerInterface in readerInterfaces)
                 {
                     if (!_typeReaders.TryAdd((readerInterface.GetGenericArguments()[0], readerInterface.GetGenericArguments()[1]), serializer))
-                        Logger.Error(LogCategory, $"Tried registering reader for type {readerInterface.GetGenericArguments()[0]} and datanode {readerInterface.GetGenericArguments()[1]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering reader for type {readerInterface.GetGenericArguments()[0]} and datanode {readerInterface.GetGenericArguments()[1]} twice");
                 }
 
                 foreach (var copierInterface in copierInterfaces)
                 {
                     if (!_typeCopiers.TryAdd(copierInterface.GetGenericArguments()[0], serializer))
-                        Logger.Error(LogCategory, $"Tried registering copier for type {copierInterface.GetGenericArguments()[0]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering copier for type {copierInterface.GetGenericArguments()[0]} twice");
                 }
 
                 foreach (var validatorInterface in validatorInterfaces)
                 {
                     if (!_typeValidators.TryAdd((validatorInterface.GetGenericArguments()[0], validatorInterface.GetGenericArguments()[1]), serializer))
-                        Logger.Error(LogCategory, $"Tried registering reader for type {validatorInterface.GetGenericArguments()[0]} and datanode {validatorInterface.GetGenericArguments()[1]} twice");
+                        Logger.ErrorS(LogCategory, $"Tried registering reader for type {validatorInterface.GetGenericArguments()[0]} and datanode {validatorInterface.GetGenericArguments()[1]} twice");
                 }
 
                 return serializer;
@@ -233,7 +247,6 @@ namespace Robust.Shared.Serialization.Manager
             return false;
         }
         #endregion
-
 
         #region TryValidate
         private bool TryValidateWithTypeValidator(
@@ -461,6 +474,50 @@ namespace Robust.Shared.Serialization.Manager
 
             return false;
         }
+        #endregion
+
+        #region Custom
+
+        private DeserializationResult ReadWithCustomTypeSerializer<T, TNode, TSerializer>(TNode node, ISerializationContext? context = null, bool skipHook = false)
+            where TSerializer : ITypeReader<T, TNode> where T : notnull where TNode : DataNode
+        {
+            var serializer = (ITypeReader<T, TNode>)GetTypeSerializer(typeof(TSerializer));
+            return serializer.Read(this, node, DependencyCollection, skipHook, context);
+        }
+
+        private DataNode WriteWithCustomTypeSerializer<T, TSerializer>(T value,
+            ISerializationContext? context = null, bool alwaysWrite = false)
+            where TSerializer : ITypeWriter<T> where T : notnull
+        {
+            var serializer = (ITypeWriter<T>)GetTypeSerializer(typeof(TSerializer));
+            return serializer.Write(this, value, alwaysWrite, context);
+        }
+
+        private TCommon CopyWithCustomTypeSerializer<TCommon, TSource, TTarget, TSerializer>(
+            TSource source,
+            TTarget target,
+            bool skipHook,
+            ISerializationContext? context = null)
+            where TSource : TCommon
+            where TTarget : TCommon
+            where TCommon : notnull
+            where TSerializer : ITypeCopier<TCommon>
+        {
+            var serializer = (ITypeCopier<TCommon>) GetTypeSerializer(typeof(TSerializer));
+            return serializer.Copy(this, source, target, skipHook, context);
+        }
+
+        private ValidationNode ValidateWithCustomTypeSerializer<T, TNode, TSerializer>(
+            TNode node,
+            ISerializationContext? context)
+            where T : notnull
+            where TNode : DataNode
+            where TSerializer : ITypeValidator<T, TNode>
+        {
+            var serializer = (ITypeValidator<T, TNode>) GetTypeSerializer(typeof(TSerializer));
+            return serializer.Validate(this, node, DependencyCollection, context);
+        }
+
         #endregion
     }
 }
