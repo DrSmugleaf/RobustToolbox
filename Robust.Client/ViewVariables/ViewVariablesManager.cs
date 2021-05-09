@@ -1,20 +1,20 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
-using Robust.Client.Interfaces.ResourceManagement;
 using Robust.Client.UserInterface.Controls;
 using Robust.Client.UserInterface.CustomControls;
 using Robust.Client.ViewVariables.Editors;
 using Robust.Client.ViewVariables.Instances;
 using Robust.Shared.GameObjects;
-using Robust.Shared.Interfaces.GameObjects;
-using Robust.Shared.Interfaces.Network;
-using Robust.Shared.Interfaces.Serialization;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
+using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
+using Robust.Shared.Prototypes;
+using Robust.Shared.Serialization;
 using Robust.Shared.ViewVariables;
 using NumberType = Robust.Client.ViewVariables.Editors.VVPropEditorNumeric.NumberType;
 
@@ -23,7 +23,7 @@ namespace Robust.Client.ViewVariables
     internal class ViewVariablesManager : ViewVariablesManagerShared, IViewVariablesManagerInternal
     {
         [Dependency] private readonly IClientNetManager _netManager = default!;
-        [Dependency] private readonly IResourceCache _resourceCache = default!;
+        [Dependency] private readonly IRobustSerializer _robustSerializer = default!;
         [Dependency] private readonly IEntityManager _entityManager = default!;
 
         private uint _nextReqId = 1;
@@ -124,9 +124,14 @@ namespace Robust.Client.ViewVariables
                 return new VVPropEditorString();
             }
 
+            if (typeof(IPrototype).IsAssignableFrom(type) || typeof(ViewVariablesBlobMembers.PrototypeReferenceToken).IsAssignableFrom(type))
+            {
+                return (VVPropEditor)Activator.CreateInstance(typeof(VVPropEditorIPrototype<>).MakeGenericType(type))!;
+            }
+
             if (typeof(ISelfSerialize).IsAssignableFrom(type))
             {
-                return (VVPropEditor)Activator.CreateInstance(typeof(VVPropEditorISelfSerialzable<>).MakeGenericType(type))!;
+                return (VVPropEditor)Activator.CreateInstance(typeof(VVPropEditorISelfSerializable<>).MakeGenericType(type))!;
             }
 
             if (type.IsEnum)
@@ -214,24 +219,28 @@ namespace Robust.Client.ViewVariables
             ViewVariablesInstance instance;
             if (obj is IEntity entity && !entity.Deleted)
             {
-                instance = new ViewVariablesInstanceEntity(this, _resourceCache, _entityManager);
+                instance = new ViewVariablesInstanceEntity(this, _entityManager, _robustSerializer);
             }
             else
             {
-                instance = new ViewVariablesInstanceObject(this, _resourceCache);
+                instance = new ViewVariablesInstanceObject(this, _robustSerializer);
             }
 
             var window = new SS14Window {Title = "View Variables"};
             instance.Initialize(window, obj);
             window.OnClose += () => _closeInstance(instance, false);
             _windows.Add(instance, window);
+            window.SetSize = _defaultWindowSize;
             window.Open();
-            LayoutContainer.SetSize(window, _defaultWindowSize);
         }
 
         public async void OpenVV(ViewVariablesObjectSelector selector)
         {
-            var window = new SS14Window {Title = "View Variables"};
+            var window = new SS14Window
+            {
+                Title = "View Variables",
+                SetSize = _defaultWindowSize
+            };
             var loadingLabel = new Label {Text = "Retrieving remote object data from server..."};
             window.Contents.AddChild(loadingLabel);
 
@@ -255,19 +264,19 @@ namespace Robust.Client.ViewVariables
             ViewVariablesInstance instance;
             if (type != null && typeof(IEntity).IsAssignableFrom(type))
             {
-                instance = new ViewVariablesInstanceEntity(this, _resourceCache, _entityManager);
+                instance = new ViewVariablesInstanceEntity(this, _entityManager, _robustSerializer);
             }
             else
             {
-                instance = new ViewVariablesInstanceObject(this, _resourceCache);
+                instance = new ViewVariablesInstanceObject(this, _robustSerializer);
             }
 
             loadingLabel.Dispose();
             instance.Initialize(window, blob, session);
             window.OnClose += () => _closeInstance(instance, false);
             _windows.Add(instance, window);
+            window.Size = _defaultWindowSize;
             window.Open();
-            LayoutContainer.SetSize(window, _defaultWindowSize);
         }
 
         public Task<ViewVariablesRemoteSession> RequestSession(ViewVariablesObjectSelector selector)
@@ -315,7 +324,12 @@ namespace Robust.Client.ViewVariables
             _netManager.ClientSendMessage(closeMsg);
         }
 
-        public void ModifyRemote(ViewVariablesRemoteSession session, object[] propertyIndex, object? value)
+        public bool TryGetSession(uint sessionId, [NotNullWhen(true)] out ViewVariablesRemoteSession? session)
+        {
+            return _sessions.TryGetValue(sessionId, out session);
+        }
+
+        public void ModifyRemote(ViewVariablesRemoteSession session, object[] propertyIndex, object? value, bool reinterpretValue = false)
         {
             if (!_sessions.ContainsKey(session.SessionId))
             {
@@ -324,6 +338,7 @@ namespace Robust.Client.ViewVariables
 
             var msg = _netManager.CreateNetMessage<MsgViewVariablesModifyRemote>();
             msg.SessionId = session.SessionId;
+            msg.ReinterpretValue = reinterpretValue;
             msg.PropertyIndex = propertyIndex;
             msg.Value = value;
             _netManager.ClientSendMessage(msg);

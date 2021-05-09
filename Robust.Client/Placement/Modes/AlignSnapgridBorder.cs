@@ -1,11 +1,7 @@
-﻿using System;
-using Robust.Client.Graphics.ClientEye;
-using Robust.Client.Graphics.Drawing;
-using Robust.Shared.Interfaces.GameObjects;
-using Robust.Shared.IoC;
+using System;
+using Robust.Client.Graphics;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
-using Robust.Shared.Utility;
 
 namespace Robust.Client.Placement.Modes
 {
@@ -66,7 +62,7 @@ namespace Robust.Client.Placement.Modes
             var gridId = MouseCoords.GetGridId(pManager.EntityManager);
             if (gridId.IsValid())
             {
-                snapSize = pManager.MapManager.GetGrid(gridId).SnapSize; //Find snap size for the grid.
+                snapSize = pManager.MapManager.GetGrid(gridId).TileSize; //Find snap size for the grid.
                 onGrid = true;
             }
             else

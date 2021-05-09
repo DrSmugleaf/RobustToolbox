@@ -1,13 +1,13 @@
-﻿using Robust.Client.Interfaces.Graphics;
-using Robust.Client.Interfaces.Graphics.ClientEye;
-using Robust.Shared.Interfaces.GameObjects;
+using Robust.Client.UserInterface;
+using Robust.Client.UserInterface.CustomControls;
+using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 
 #nullable enable
 
-namespace Robust.Client.Graphics.ClientEye
+namespace Robust.Client.Graphics
 {
     /// <inheritdoc />
     public sealed class EyeManager : IEyeManager
@@ -21,6 +21,7 @@ namespace Robust.Client.Graphics.ClientEye
 
         [Dependency] private readonly IClyde _displayManager = default!;
         [Dependency] private readonly IEntityManager _entityManager = default!;
+        [Dependency] private readonly IUserInterfaceManager _uiManager = default!;
 
         // We default to this when we get set to a null eye.
         private readonly FixedEye _defaultEye = new();
@@ -34,9 +35,16 @@ namespace Robust.Client.Graphics.ClientEye
             set => _currentEye = value;
         }
 
+        public IViewportControl MainViewport { get; set; } = default!;
+
         public void ClearCurrentEye()
         {
             _currentEye = _defaultEye;
+        }
+
+        void IEyeManager.Initialize()
+        {
+            MainViewport = _uiManager.MainViewport;
         }
 
         /// <inheritdoc />
@@ -51,7 +59,7 @@ namespace Robust.Client.Graphics.ClientEye
             var topRight = ScreenToMap(new Vector2(vpSize.X, 0));
             var bottomRight = ScreenToMap(vpSize);
             var bottomLeft = ScreenToMap(new Vector2(0, vpSize.Y));
-            
+
             var left = MathHelper.Min(topLeft.X, topRight.X, bottomRight.X, bottomLeft.X);
             var bottom = MathHelper.Min(topLeft.Y, topRight.Y, bottomRight.Y, bottomLeft.Y);
             var right = MathHelper.Max(topLeft.X, topRight.X, bottomRight.X, bottomLeft.X);
@@ -63,16 +71,7 @@ namespace Robust.Client.Graphics.ClientEye
         /// <inheritdoc />
         public Vector2 WorldToScreen(Vector2 point)
         {
-            var newPoint = point;
-
-            CurrentEye.GetViewMatrix(out var viewMatrix);
-            newPoint = viewMatrix * newPoint;
-
-            // (inlined version of UiProjMatrix)
-            newPoint *= new Vector2(1, -1) * PixelsPerMeter;
-            newPoint += _displayManager.ScreenSize / 2f;
-
-            return newPoint;
+            return MainViewport.WorldToScreen(point);
         }
 
         /// <inheritdoc />
@@ -105,29 +104,23 @@ namespace Robust.Client.Graphics.ClientEye
 
         public ScreenCoordinates MapToScreen(MapCoordinates point)
         {
-            return new(WorldToScreen(point.Position));
+            return new(WorldToScreen(point.Position), MainViewport.Window?.Id ?? default);
         }
 
         /// <inheritdoc />
         public MapCoordinates ScreenToMap(ScreenCoordinates point)
         {
-            return ScreenToMap(point.Position);
+            var (pos, window) = point;
+            if (window != MainViewport.Window?.Id)
+                return default;
+
+            return MainViewport.ScreenToMap(pos);
         }
 
         /// <inheritdoc />
         public MapCoordinates ScreenToMap(Vector2 point)
         {
-            var newPoint = point;
-
-            // (inlined version of UiProjMatrix^-1)
-            newPoint -= _displayManager.ScreenSize / 2f;
-            newPoint *= new Vector2(1, -1) / PixelsPerMeter;
-
-            // view matrix
-            CurrentEye.GetViewMatrixInv(out var viewMatrixInv);
-            newPoint = viewMatrixInv * newPoint;
-
-            return new MapCoordinates(newPoint, CurrentMap);
+            return MainViewport.ScreenToMap(point);
         }
     }
 }

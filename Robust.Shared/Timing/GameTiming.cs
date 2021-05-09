@@ -1,10 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using Robust.Shared.Interfaces.Timing;
+using Robust.Shared.IoC;
+using Robust.Shared.Network;
 using Robust.Shared.Utility;
-using Robust.Shared.Log;
 
 namespace Robust.Shared.Timing
 {
@@ -86,6 +85,8 @@ namespace Robust.Shared.Timing
         ///     The current real uptime of the simulation. Use this for UI and out of game timing.
         /// </summary>
         public TimeSpan RealTime => _realTimer.Elapsed;
+
+        public virtual TimeSpan ServerTime => TimeSpan.Zero;
 
         /// <summary>
         ///     The simulated time it took to render the last frame.
@@ -217,15 +218,6 @@ namespace Robust.Shared.Timing
         }
 
         /// <summary>
-        ///     Resets the real uptime of the server.
-        /// </summary>
-        public void ResetRealTime()
-        {
-            _realTimer.Restart();
-            _lastRealTime = TimeSpan.Zero;
-        }
-
-        /// <summary>
         /// Resets the simulation time.
         /// </summary>
         public void ResetSimTime()
@@ -236,23 +228,28 @@ namespace Robust.Shared.Timing
             Paused = true;
         }
 
-        public bool IsFirstTimePredicted { get; private set; } = true;
-
-        public void StartPastPrediction()
+        public virtual TimeSpan RealLocalToServer(TimeSpan local)
         {
-            // Don't allow recursive predictions.
-            // Not sure if it's necessary yet and if not, great!
-            DebugTools.Assert(IsFirstTimePredicted);
-
-            IsFirstTimePredicted = false;
+            return TimeSpan.Zero;
         }
 
-        public void EndPastPrediction()
+        public virtual TimeSpan RealServerToLocal(TimeSpan server)
         {
-            DebugTools.Assert(!IsFirstTimePredicted);
-
-            IsFirstTimePredicted = true;
+            return TimeSpan.Zero;
         }
+
+        protected virtual TimeSpan? GetServerOffset()
+        {
+            return null;
+        }
+
+        public bool IsFirstTimePredicted { get; protected set; } = true;
+
+        /// <inheritdoc />
+        public bool InPrediction => CurTick > LastRealTick;
+
+        /// <inheritdoc />
+        public GameTick LastRealTick { get; set; }
 
         /// <summary>
         ///     Calculates the average FPS of the last 50 real frame times.

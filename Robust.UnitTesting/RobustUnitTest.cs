@@ -1,17 +1,14 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
+using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
 using Robust.Shared.GameObjects;
-using Robust.Shared.Interfaces.Configuration;
-using Robust.Shared.Interfaces.GameObjects;
-using Robust.Shared.Interfaces.Reflection;
-using Robust.Shared.Interfaces.Resources;
 using Robust.Shared.IoC;
-using Robust.Shared.Timing;
+using Robust.Shared.Map;
+using Robust.Shared.Reflection;
 using Robust.Shared.Utility;
 
 namespace Robust.UnitTesting
@@ -68,6 +65,19 @@ namespace Robust.UnitTesting
                 configurationManager.LoadCVarsFromAssembly(assembly);
             }
 
+            var entMan = IoCManager.Resolve<IEntityManager>();
+
+            if(entMan.EventBus == null)
+            {
+                entMan.Initialize();
+                entMan.Startup();
+            }
+
+            IoCManager.Resolve<IEntityLookup>().Initialize();
+            var mapMan = IoCManager.Resolve<IMapManager>();
+            mapMan.Initialize();
+            mapMan.Startup();
+
             IoCManager.Resolve<IReflectionManager>().LoadAssemblies(assemblies);
 
             var modLoader = IoCManager.Resolve<TestingModLoader>();
@@ -80,6 +90,11 @@ namespace Robust.UnitTesting
             {
                 compFactory.Register<MetaDataComponent>();
                 compFactory.RegisterReference<MetaDataComponent, IMetaDataComponent>();
+            }
+
+            if(entMan.EventBus == null)
+            {
+                entMan.Startup();
             }
         }
 

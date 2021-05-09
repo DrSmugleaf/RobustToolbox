@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net;
-using Robust.Shared.Interfaces.Network;
 
 namespace Robust.Shared.Network
 {
@@ -33,14 +32,16 @@ namespace Robust.Shared.Network
 
         public string? DenyReason { get; private set; }
 
+        public NetUserData UserData { get; }
+
         /// <summary>
         /// The IP of the incoming connection.
         /// </summary>
-        public readonly NetUserId UserId;
+        public NetUserId UserId => UserData.UserId;
+        public string UserName => UserData.UserName;
 
-        public readonly IPEndPoint IP;
-        public readonly string UserName;
-        public readonly LoginType AuthType;
+        public IPEndPoint IP { get; }
+        public LoginType AuthType { get; }
 
         public void Deny(string reason)
         {
@@ -48,14 +49,15 @@ namespace Robust.Shared.Network
         }
 
         /// <summary>
-        /// Constructs a new instance.
+        ///     Constructs a new instance.
         /// </summary>
-        /// <param name="userId">The session ID of the incoming connection.</param>
-        public NetConnectingArgs(NetUserId userId, IPEndPoint ip, string userName, LoginType authType)
+        /// <param name="data">The user data of the incoming connection.</param>
+        /// <param name="ip"></param>
+        /// <param name="authType">The type of authentication to use when connecting.</param>
+        public NetConnectingArgs(NetUserData data, IPEndPoint ip, LoginType authType)
         {
-            UserId = userId;
+            UserData = data;
             IP = ip;
-            UserName = userName;
             AuthType = authType;
         }
     }

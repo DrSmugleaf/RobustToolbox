@@ -1,19 +1,16 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Buffers;
 using OpenToolkit.Graphics.OpenGL4;
 using Robust.Client.GameObjects;
-using Robust.Client.GameObjects.EntitySystems;
-using Robust.Client.Graphics.ClientEye;
-using Robust.Client.Interfaces.Graphics;
-using Robust.Client.Interfaces.Graphics.ClientEye;
-using Robust.Client.ResourceManagement.ResourceTypes;
+using Robust.Client.ResourceManagement;
 using Robust.Shared.GameObjects;
-using Robust.Shared.GameObjects.Systems;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using static Robust.Client.GameObjects.ClientOccluderComponent;
 using OGLTextureWrapMode = OpenToolkit.Graphics.OpenGL.TextureWrapMode;
+using TKStencilOp = OpenToolkit.Graphics.OpenGL4.StencilOp;
 
 namespace Robust.Client.Graphics.Clyde
 {
@@ -30,7 +27,11 @@ namespace Robust.Client.Graphics.Clyde
         // Horizontal width, in pixels, of the shadow maps used to render FOV.
         // I figured this was more accuracy sensitive than lights so resolution is significantly higher.
         private const int FovMapSize = 2048;
-        private const int MaxLightsPerScene = 128;
+
+        // The maximum possible amount of lights in the light list.
+        // In the average case, the only cost of increasing this value is memory.
+        // If you are ever in a situation where this value needs to be increased, however, it will also implicitly cost some CPU time to sort the additional lights.
+        private const int LightsToRenderListSize = 2048;
 
         private ClydeShaderInstance _fovDebugShaderInstance = default!;
 
@@ -80,16 +81,18 @@ namespace Robust.Client.Graphics.Clyde
 
         // For depth calculation of lighting shadows.
         private RenderTexture _shadowRenderTarget = default!;
+        // Used because otherwise a MaxLightsPerScene change callback getting hit on startup causes interesting issues (read: bugs)
+        private bool _shadowRenderTargetCanInitializeSafely = false;
 
         // Proxies to textures of the above render targets.
         private ClydeTexture FovTexture => _fovRenderTarget.Texture;
         private ClydeTexture ShadowTexture => _shadowRenderTarget.Texture;
 
-        private readonly (PointLightComponent light, Vector2 pos)[] _lightsToRenderList
-            = new (PointLightComponent light, Vector2 pos)[MaxLightsPerScene];
+        private (PointLightComponent light, Vector2 pos, float distanceSquared)[] _lightsToRenderList = new (PointLightComponent light, Vector2 pos, float distanceSquared)[LightsToRenderListSize];
 
         private unsafe void InitLighting()
         {
+            // Other...
             LoadLightingShaders();
 
             {
@@ -160,10 +163,8 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             // Shadow FBO.
-            _shadowRenderTarget = CreateRenderTarget((ShadowMapSize, MaxLightsPerScene),
-                new RenderTargetFormatParameters(_hasGLFloatFramebuffers ? RenderTargetColorFormat.RG32F : RenderTargetColorFormat.Rgba8, true),
-                new TextureSampleParameters {WrapMode = TextureWrapMode.Repeat, Filter = true},
-                nameof(_shadowRenderTarget));
+            _shadowRenderTargetCanInitializeSafely = true;
+            MaxLightsPerSceneChanged(_maxLightsPerScene);
         }
 
         private void LoadLightingShaders()
@@ -194,7 +195,6 @@ namespace Robust.Client.Graphics.Clyde
                     return default;
                 }
             }
-
 
             _lightSoftShaderHandle = LoadShaderHandle("/Shaders/Internal/light-soft.swsl");
             _lightHardShaderHandle = LoadShaderHandle("/Shaders/Internal/light-hard.swsl");
@@ -334,6 +334,14 @@ namespace Robust.Client.Graphics.Clyde
 
             DrawFov(viewport, eye);
 
+            if (!_lightManager.DrawLighting)
+            {
+                BindRenderTargetFull(viewport.RenderTarget);
+                GL.Viewport(0, 0, viewport.Size.X, viewport.Size.Y);
+                CheckGlError();
+                return;
+            }
+
             using (DebugGroup("Draw shadow depth"))
             {
                 PrepareDepthDraw(RtToLoaded(_shadowRenderTarget));
@@ -344,7 +352,7 @@ namespace Robust.Client.Graphics.Clyde
                 {
                     for (var i = 0; i < count; i++)
                     {
-                        var (light, lightPos) = lights[i];
+                        var (light, lightPos, _) = lights[i];
 
                         DrawOcclusionDepth(lightPos, ShadowMapSize, light.Radius, i);
                     }
@@ -353,15 +361,22 @@ namespace Robust.Client.Graphics.Clyde
                 FinalizeDepthDraw();
             }
 
-            BindRenderTargetImmediate(RtToLoaded(viewport.LightRenderTarget));
-            CheckGlError();
-            GLClearColor(Color.FromSrgb(AmbientLightColor));
-            GL.Clear(ClearBufferMask.ColorBufferBit);
-            CheckGlError();
+            GL.Enable(EnableCap.StencilTest);
+            _isStencilling = true;
 
             var (lightW, lightH) = GetLightMapSize(viewport.Size);
             GL.Viewport(0, 0, lightW, lightH);
             CheckGlError();
+
+            BindRenderTargetImmediate(RtToLoaded(viewport.LightRenderTarget));
+            CheckGlError();
+            GLClearColor(_lightManager.AmbientLightColor);
+            GL.ClearStencil(0xFF);
+            GL.StencilMask(0xFF);
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.StencilBufferBit);
+            CheckGlError();
+
+            ApplyLightingFovToBuffer(viewport, eye);
 
             var lightShader = _loadedShaders[_enableSoftShadows ? _lightSoftShaderHandle : _lightHardShaderHandle].Program;
             lightShader.Use();
@@ -374,6 +389,11 @@ namespace Robust.Client.Graphics.Clyde
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
             CheckGlError();
 
+            GL.StencilFunc(StencilFunction.Equal, 0xFF, 0xFF);
+            CheckGlError();
+            GL.StencilOp(TKStencilOp.Keep, TKStencilOp.Keep, TKStencilOp.Keep);
+            CheckGlError();
+
             var lastRange = float.NaN;
             var lastPower = float.NaN;
             var lastColor = new Color(float.NaN, float.NaN, float.NaN, float.NaN);
@@ -382,7 +402,7 @@ namespace Robust.Client.Graphics.Clyde
 
             for (var i = 0; i < count; i++)
             {
-                var (component, lightPos) = lights[i];
+                var (component, lightPos, _) = lights[i];
 
                 var transform = component.Owner.Transform;
 
@@ -455,10 +475,10 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             ResetBlendFunc();
+            GL.Disable(EnableCap.StencilTest);
+            _isStencilling = false;
 
             CheckGlError();
-
-            ApplyLightingFovToBuffer(viewport, eye);
 
             BlurOntoWalls(viewport, eye);
 
@@ -473,9 +493,73 @@ namespace Robust.Client.Graphics.Clyde
             _lightingReady = true;
         }
 
-        private ((PointLightComponent light, Vector2 pos)[] lights, int count, Box2 expandedBounds)
+        private ((PointLightComponent light, Vector2 pos, float distanceSquared)[] lights, int count, Box2 expandedBounds)
             GetLightsToRender(MapId map, in Box2 worldBounds)
         {
+            var renderingTreeSystem = _entitySystemManager.GetEntitySystem<RenderingTreeSystem>();
+            var state = (this, worldBounds, count: 0);
+
+            foreach (var gridId in _mapManager.FindGridIdsIntersecting(map, worldBounds, true))
+            {
+                Box2 gridBounds;
+
+                if (gridId == GridId.Invalid)
+                {
+                    gridBounds = worldBounds;
+                }
+                else
+                {
+                    gridBounds = worldBounds.Translated(-_mapManager.GetGrid(gridId).WorldPosition);
+                }
+
+                var lightTree = renderingTreeSystem.GetLightTreeForMap(map, gridId);
+
+                lightTree.QueryAabb(ref state, (ref (Clyde clyde, Box2 worldBounds, int count) state, in PointLightComponent light) =>
+                {
+                    var transform = light.Owner.Transform;
+
+                    if (state.count >= LightsToRenderListSize)
+                    {
+                        // There are too many lights to fit in the static memory.
+                        return false;
+                    }
+
+                    // TODO: Don't insert into trees for these, same as sprites.
+                    if (!light.Enabled || light.ContainerOccluded)
+                    {
+                        return true;
+                    }
+
+                    var lightPos = transform.WorldMatrix.Transform(light.Offset);
+
+                    var circle = new Circle(lightPos, light.Radius);
+
+                    // If the light doesn't touch anywhere the camera can see, it doesn't matter.
+                    if (!circle.Intersects(state.worldBounds))
+                    {
+                        return true;
+                    }
+
+                    float distanceSquared = (state.worldBounds.Center - lightPos).LengthSquared;
+                    state.clyde._lightsToRenderList[state.count++] = (light, lightPos, distanceSquared);
+
+                    return true;
+                }, gridBounds);
+            }
+
+            if (state.count > _maxLightsPerScene)
+            {
+                // There are too many lights to fit in the scene.
+                // This check must occur before occluder expansion, or else bad things happen.
+                // Sort lights by distance.
+                Array.Sort(_lightsToRenderList, 0, state.count, Comparer<(PointLightComponent light, Vector2 pos, float distanceSquared)>.Create((x, y) =>
+                {
+                    return x.distanceSquared.CompareTo(y.distanceSquared);
+                }));
+                // Then effectively delete the furthest lights.
+                state.count = _maxLightsPerScene;
+            }
+
             // When culling occluders later, we can't just remove any occluders outside the worldBounds.
             // As they could still affect the shadows of (large) light sources.
             // We expand the world bounds so that it encompasses the center of every light source.
@@ -483,44 +567,13 @@ namespace Robust.Client.Graphics.Clyde
             // (if the occluder is in the current lights at all, it's still not between the light and the world bounds).
             var expandedBounds = worldBounds;
 
-            var renderingTreeSystem = _entitySystemManager.GetEntitySystem<RenderingTreeSystem>();
-            var lightTree = renderingTreeSystem.GetLightTreeForMap(map);
-
-            var state = (this, expandedBounds, count: 0);
-
-            lightTree.QueryAabb(ref state, (ref (Clyde clyde, Box2 expandedBounds, int count) state, in PointLightComponent light) =>
+            for (var i = 0; i < state.count; i++)
             {
-                var transform = light.Owner.Transform;
+                var (_, lightPos, _) = _lightsToRenderList[i];
+                expandedBounds = expandedBounds.ExtendToContain(lightPos);
+            }
 
-                if (!light.Enabled || light.ContainerOccluded)
-                {
-                    return true;
-                }
-
-                var lightPos = transform.WorldMatrix.Transform(light.Offset);
-
-                var circle = new Circle(lightPos, light.Radius);
-
-                if (!circle.Intersects(state.expandedBounds))
-                {
-                    return true;
-                }
-
-                state.clyde._lightsToRenderList[state.count] = (light, lightPos);
-                state.count += 1;
-
-                state.expandedBounds = state.expandedBounds.ExtendToContain(lightPos);
-
-                if (state.count == MaxLightsPerScene)
-                {
-                    // TODO: Allow more than MaxLightsPerScene lights.
-                    return false;
-                }
-
-                return true;
-            }, expandedBounds);
-
-            return (_lightsToRenderList, state.count, state.expandedBounds);
+            return (_lightsToRenderList, state.count, expandedBounds);
         }
 
         private void BlurOntoWalls(Viewport viewport, IEye eye)
@@ -551,7 +604,7 @@ namespace Robust.Client.Graphics.Clyde
 
             // Have to scale the blurring radius based on viewport size and camera zoom.
             const float refCameraHeight = 14;
-            var cameraSize = eye.Zoom.Y * viewport.Size.Y / EyeManager.PixelsPerMeter;
+            var cameraSize = eye.Zoom.Y * viewport.Size.Y * (1 / viewport.RenderScale.Y) / EyeManager.PixelsPerMeter;
             // 7e-3f is just a magic factor that makes it look ok.
             var factor = 7e-3f * (refCameraHeight / cameraSize);
 
@@ -619,6 +672,12 @@ namespace Robust.Client.Graphics.Clyde
 
         private void ApplyFovToBuffer(Viewport viewport, IEye eye)
         {
+            GL.Clear(ClearBufferMask.StencilBufferBit);
+            GL.Enable(EnableCap.StencilTest);
+            GL.StencilOp(OpenToolkit.Graphics.OpenGL4.StencilOp.Keep, OpenToolkit.Graphics.OpenGL4.StencilOp.Keep, OpenToolkit.Graphics.OpenGL4.StencilOp.Replace);
+            GL.StencilFunc(StencilFunction.Always, 1, 0xFF);
+            GL.StencilMask(0xFF);
+
             // Applies FOV to the final framebuffer.
 
             var fovShader = _loadedShaders[_fovShaderHandle].Program;
@@ -632,6 +691,10 @@ namespace Robust.Client.Graphics.Clyde
             fovShader.SetUniformMaybe("center", eye.Position.Position);
 
             DrawBlit(viewport, fovShader);
+
+            GL.StencilMask(0x00);
+            GL.Disable(EnableCap.StencilTest);
+            _isStencilling = false;
         }
 
         private void ApplyLightingFovToBuffer(Viewport viewport, IEye eye)
@@ -663,6 +726,13 @@ namespace Robust.Client.Graphics.Clyde
 
             fovShader.SetUniformTextureMaybe(UniIMainTexture, TextureUnit.Texture0);
             fovShader.SetUniformMaybe("center", eye.Position.Position);
+
+            GL.StencilMask(0xFF);
+            CheckGlError();
+            GL.StencilFunc(StencilFunction.Always, 0, 0);
+            CheckGlError();
+            GL.StencilOp(TKStencilOp.Keep, TKStencilOp.Keep, TKStencilOp.Replace);
+            CheckGlError();
 
             DrawBlit(viewport, fovShader);
 
@@ -749,12 +819,10 @@ namespace Robust.Client.Graphics.Clyde
                         var worldTransform = transform.WorldMatrix;
                         var box = occluder.BoundingBox;
 
-                        // So uh, angle 0 = east... Apparently...
-                        // We account for that here so I don't go insane.
-                        var (tlX, tlY) = worldTransform.Transform(box.BottomLeft);
-                        var (trX, trY) = worldTransform.Transform(box.TopLeft);
-                        var (brX, brY) = worldTransform.Transform(box.TopRight);
-                        var (blX, blY) = worldTransform.Transform(box.BottomRight);
+                        var (tlX, tlY) = worldTransform.Transform(box.TopLeft);
+                        var (trX, trY) = worldTransform.Transform(box.TopRight);
+                        var (brX, brY) = worldTransform.Transform(box.BottomRight);
+                        var (blX, blY) = worldTransform.Transform(box.BottomLeft);
 
                         // Faces.
                         var faceN = new Vector4(tlX, tlY, trX, trY);
@@ -915,7 +983,8 @@ namespace Robust.Client.Graphics.Clyde
             viewport.WallMaskRenderTarget = CreateRenderTarget(viewport.Size, RenderTargetColorFormat.R8,
                 name: $"{viewport.Name}-{nameof(viewport.WallMaskRenderTarget)}");
 
-            viewport.LightRenderTarget = CreateRenderTarget(lightMapSize, lightMapColorFormat,
+            viewport.LightRenderTarget = CreateRenderTarget(lightMapSize,
+                new RenderTargetFormatParameters(lightMapColorFormat, hasDepthStencil: true),
                 lightMapSampleParameters,
                 $"{viewport.Name}-{nameof(viewport.LightRenderTarget)}");
 
@@ -953,13 +1022,32 @@ namespace Robust.Client.Graphics.Clyde
             return (w, h);
         }
 
-        protected override void LightmapDividerChanged(int newValue)
+        private void LightmapDividerChanged(int newValue)
         {
             _lightmapDivider = newValue;
             RegenAllLightRts();
         }
 
-        protected override void SoftShadowsChanged(bool newValue)
+        private void MaxLightsPerSceneChanged(int newValue)
+        {
+            _maxLightsPerScene = newValue;
+
+            // This guard is in place because otherwise the shadow FBO is initialized before GL is initialized.
+            if (!_shadowRenderTargetCanInitializeSafely)
+                return;
+
+            if (_shadowRenderTarget != null)
+            {
+                DeleteRenderTexture(_shadowRenderTarget.Handle);
+            }
+            // Shadow FBO.
+            _shadowRenderTarget = CreateRenderTarget((ShadowMapSize, _maxLightsPerScene),
+                new RenderTargetFormatParameters(_hasGLFloatFramebuffers ? RenderTargetColorFormat.RG32F : RenderTargetColorFormat.Rgba8, true),
+                new TextureSampleParameters {WrapMode = TextureWrapMode.Repeat, Filter = true},
+                nameof(_shadowRenderTarget));
+        }
+
+        private void SoftShadowsChanged(bool newValue)
         {
             _enableSoftShadows = newValue;
         }

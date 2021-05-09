@@ -1,8 +1,8 @@
-﻿using Robust.Client.Interfaces.ResourceManagement;
-using Robust.Client.UserInterface;
+﻿using Robust.Client.UserInterface;
 using Robust.Client.UserInterface.Controls;
 using Robust.Client.ViewVariables.Instances;
 using Robust.Shared.Maths;
+using Robust.Shared.Serialization;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
 
@@ -11,7 +11,7 @@ namespace Robust.Client.ViewVariables.Traits
     internal class ViewVariablesTraitMembers : ViewVariablesTrait
     {
         private readonly IViewVariablesManagerInternal _vvm;
-        private readonly IResourceCache _resourceCache;
+        private readonly IRobustSerializer _robustSerializer;
 
         private VBoxContainer _memberList = default!;
 
@@ -22,9 +22,9 @@ namespace Robust.Client.ViewVariables.Traits
             instance.AddTab("Members", _memberList);
         }
 
-        public ViewVariablesTraitMembers(IViewVariablesManagerInternal vvm, IResourceCache resourceCache)
+        public ViewVariablesTraitMembers(IViewVariablesManagerInternal vvm, IRobustSerializer robustSerializer)
         {
-            _resourceCache = resourceCache;
+            _robustSerializer = robustSerializer;
             _vvm = vvm;
         }
 
@@ -36,7 +36,7 @@ namespace Robust.Client.ViewVariables.Traits
             {
                 var first = true;
                 foreach (var group in ViewVariablesInstance.LocalPropertyList(Instance.Object,
-                    Instance.ViewVariablesManager, _resourceCache))
+                    Instance.ViewVariablesManager, _robustSerializer))
                 {
                     CreateMemberGroupHeader(
                         ref first,
@@ -64,16 +64,16 @@ namespace Robust.Client.ViewVariables.Traits
 
                     foreach (var propertyData in groupMembers)
                     {
-                        var propertyEdit = new ViewVariablesPropertyControl(_vvm, _resourceCache);
+                        var propertyEdit = new ViewVariablesPropertyControl(_vvm, _robustSerializer);
                         propertyEdit.SetStyle(otherStyle = !otherStyle);
                         var editor = propertyEdit.SetProperty(propertyData);
 
                         var selectorChain = new object[] {new ViewVariablesMemberSelector(propertyData.PropertyIndex)};
                         editor.WireNetworkSelector(Instance.Session!.SessionId, selectorChain);
-                        editor.OnValueChanged += o =>
+                        editor.OnValueChanged += (o, r) =>
                         {
                             Instance.ViewVariablesManager.ModifyRemote(Instance.Session!,
-                                selectorChain, o);
+                                selectorChain, o, r);
                         };
 
                         _memberList.AddChild(propertyEdit);
@@ -86,7 +86,7 @@ namespace Robust.Client.ViewVariables.Traits
         {
             if (!first)
             {
-                container.AddChild(new Control {CustomMinimumSize = (0, 16)});
+                container.AddChild(new Control {MinSize = (0, 16)});
             }
 
             first = false;

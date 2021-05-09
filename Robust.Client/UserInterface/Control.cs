@@ -3,9 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
-using Robust.Client.Graphics.Drawing;
-using Robust.Client.Interfaces.Graphics;
-using Robust.Client.Interfaces.UserInterface;
+using Robust.Client.Graphics;
+using Robust.Client.UserInterface.Controls;
 using Robust.Client.UserInterface.XAML;
 using Robust.Shared.Animations;
 using Robust.Shared.IoC;
@@ -40,6 +39,14 @@ namespace Robust.Client.UserInterface
         /// </summary>
         [ViewVariables]
         public string? Name { get; set; }
+
+        /// <summary>
+        ///     If true, this control will always be rendered, even if other UI rendering is disabled.
+        /// </summary>
+        /// <remarks>
+        ///     Useful for e.g. primary viewports.
+        /// </remarks>
+        [ViewVariables(VVAccess.ReadWrite)] public bool AlwaysRender { get; set; }
 
         /// <summary>
         ///     Our parent inside the control tree.
@@ -156,7 +163,8 @@ namespace Robust.Client.UserInterface
                 _propagateVisibilityChanged(value);
                 // TODO: unhardcode this.
                 // Many containers ignore children if they're invisible, so that's why we're replicating that ehre.
-                Parent?.MinimumSizeChanged();
+                Parent?.InvalidateMeasure();
+                InvalidateMeasure();
             }
         }
 
@@ -182,11 +190,14 @@ namespace Robust.Client.UserInterface
         ///     <see cref="IUserInterfaceManager.RootControl"/>
         /// </summary>
         [ViewVariables]
-        public bool IsInsideTree { get; internal set; }
+        public bool IsInsideTree => Root != null;
+
+        [ViewVariables]
+        public virtual UIRoot? Root { get; internal set; }
 
         private void _propagateExitTree()
         {
-            IsInsideTree = false;
+            Root = null;
             _exitedTree();
 
             foreach (var child in _orderedChildren)
@@ -209,14 +220,14 @@ namespace Robust.Client.UserInterface
             UserInterfaceManagerInternal.ControlRemovedFromTree(this);
         }
 
-        private void _propagateEnterTree()
+        private void _propagateEnterTree(UIRoot root)
         {
-            IsInsideTree = true;
+            Root = root;
             _enteredTree();
 
             foreach (var child in _orderedChildren)
             {
-                child._propagateEnterTree();
+                child._propagateEnterTree(root);
             }
         }
 
@@ -582,9 +593,9 @@ namespace Robust.Client.UserInterface
             _orderedChildren.Add(child);
 
             child.Parented(this);
-            if (IsInsideTree)
+            if (Root != null)
             {
-                child._propagateEnterTree();
+                child._propagateEnterTree(Root);
             }
 
             ChildAdded(child);
@@ -596,7 +607,7 @@ namespace Robust.Client.UserInterface
         /// <param name="newChild">The new child.</param>
         protected virtual void ChildAdded(Control newChild)
         {
-            MinimumSizeChanged();
+            InvalidateMeasure();
         }
 
         /// <summary>
@@ -606,7 +617,7 @@ namespace Robust.Client.UserInterface
         protected virtual void Parented(Control newParent)
         {
             StylesheetUpdateRecursive();
-            UpdateLayout();
+            InvalidateMeasure();
         }
 
         /// <summary>
@@ -644,7 +655,7 @@ namespace Robust.Client.UserInterface
         /// <param name="child">The former child.</param>
         protected virtual void ChildRemoved(Control child)
         {
-            MinimumSizeChanged();
+            InvalidateMeasure();
         }
 
         /// <summary>
@@ -672,8 +683,6 @@ namespace Robust.Client.UserInterface
         /// <returns>True if this control does have the point and should be counted as a hit.</returns>
         protected internal virtual bool HasPoint(Vector2 point)
         {
-            // This is effectively the same implementation as the default Godot one in Control.cpp.
-            // That one gets ignored because to Godot it looks like we're ALWAYS implementing a custom HasPoint.
             var size = Size;
             return point.X >= 0 && point.X <= size.X && point.Y >= 0 && point.Y <= size.Y;
         }
@@ -757,14 +766,32 @@ namespace Robust.Client.UserInterface
         /// <summary>
         ///     Called when this control receives keyboard focus.
         /// </summary>
-        protected internal virtual void FocusEntered()
+        protected internal virtual void KeyboardFocusEntered()
         {
         }
 
         /// <summary>
-        ///     Called when this control loses keyboard focus.
+        ///     Called when this control loses keyboard focus (corresponds to UserInterfaceManager.KeyboardFocused).
         /// </summary>
-        protected internal virtual void FocusExited()
+        protected internal virtual void KeyboardFocusExited()
+        {
+        }
+
+        /// <summary>
+        ///     Fired when a control loses control focus for any reason. See <see cref="IUserInterfaceManager.ControlFocused"/>.
+        /// </summary>
+        /// <remarks>
+        ///     Controls which have some sort of drag / drop behavior should usually implement this method (typically by cancelling the drag drop).
+        ///     Otherwise, if a user clicks down LMB over one control to initiate a drag, then clicks RMB down
+        ///     over a different control while still holding down LMB, the control being dragged will now lose focus
+        ///     and will no longer receive the keyup for the LMB, thus won't cancel the drag.
+        ///     This should also be considered for controls which have any special KeyBindUp behavior - consider
+        ///     what would happen if the control lost focus and never received the KeyBindUp.
+        ///
+        ///     There is no corresponding ControlFocusEntered - if a control wants to handle that situation they should simply
+        ///     handle KeyBindDown as that's the only way a control would gain focus.
+        /// </remarks>
+        protected internal virtual void ControlFocusExited()
         {
         }
 
@@ -800,25 +827,7 @@ namespace Robust.Client.UserInterface
         /// <summary>
         ///     Called when the size of the control changes.
         /// </summary>
-        protected virtual void Resized()
-        {
-        }
-
-        internal void DoUpdate(FrameEventArgs args)
-        {
-            Update(args);
-            foreach (var child in Children)
-            {
-                child.DoUpdate(args);
-            }
-        }
-
-        /// <summary>
-        ///     This is called every process frame.
-        /// </summary>
-        protected virtual void Update(FrameEventArgs args)
-        {
-        }
+        protected virtual void Resized() { }
 
         internal void DoFrameUpdate(FrameEventArgs args)
         {

@@ -2,7 +2,7 @@
 using JetBrains.Annotations;
 using Robust.Shared.Maths;
 
-namespace Robust.Client.Graphics.Drawing
+namespace Robust.Client.Graphics
 {
     /// <summary>
     ///     This is for drawing modestly fancy boxes using minimal code.
@@ -150,6 +150,17 @@ namespace Robust.Client.Graphics.Drawing
                 }
 
                 _paddingTop = value;
+            }
+        }
+
+        public Thickness Padding
+        {
+            set
+            {
+                PaddingLeft = value.Left;
+                PaddingTop = value.Top;
+                PaddingRight = value.Right;
+                PaddingBottom = value.Bottom;
             }
         }
 

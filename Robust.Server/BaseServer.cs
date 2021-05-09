@@ -1,44 +1,38 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Prometheus;
 using Robust.Server.Console;
-using Robust.Server.Interfaces;
-using Robust.Server.Interfaces.Console;
-using Robust.Server.Interfaces.GameObjects;
-using Robust.Server.Interfaces.GameState;
-using Robust.Server.Interfaces.Placement;
-using Robust.Server.Interfaces.Player;
-using Robust.Shared.Configuration;
-using Robust.Shared.ContentPack;
-using Robust.Shared.Interfaces.Configuration;
-using Robust.Shared.Interfaces.GameObjects;
-using Robust.Shared.Interfaces.Map;
-using Robust.Shared.Interfaces.Network;
-using Robust.Shared.Interfaces.Serialization;
-using Robust.Shared.Interfaces.Timing;
-using Robust.Shared.Interfaces.Timers;
-using Robust.Shared.IoC;
-using Robust.Shared.Log;
-using Robust.Shared.Prototypes;
-using Robust.Server.Interfaces.ServerStatus;
-using Robust.Server.ViewVariables;
-using Robust.Shared.Asynchronous;
-using Robust.Shared.Timing;
-using Robust.Shared.Utility;
-using Robust.Shared.Interfaces.Log;
-using Robust.Shared.Interfaces.Resources;
-using Robust.Shared.Exceptions;
-using Robust.Server.Interfaces.Debugging;
+using Robust.Server.DataMetrics;
+using Robust.Server.Debugging;
+using Robust.Server.GameObjects;
+using Robust.Server.GameStates;
+using Robust.Server.Log;
+using Robust.Server.Placement;
+using Robust.Server.Player;
 using Robust.Server.Scripting;
 using Robust.Server.ServerStatus;
+using Robust.Server.Utility;
+using Robust.Server.ViewVariables;
 using Robust.Shared;
-using Robust.Shared.Network.Messages;
-using Robust.Server.DataMetrics;
-using Robust.Server.Log;
+using Robust.Shared.Asynchronous;
+using Robust.Shared.Configuration;
+using Robust.Shared.ContentPack;
+using Robust.Shared.Exceptions;
+using Robust.Shared.GameObjects;
+using Robust.Shared.IoC;
 using Robust.Shared.Localization;
+using Robust.Shared.Log;
+using Robust.Shared.Map;
+using Robust.Shared.Network;
+using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization;
+using Robust.Shared.Serialization.Manager;
+using Robust.Shared.Timing;
+using Robust.Shared.Utility;
 using Serilog.Debugging;
 using Serilog.Sinks.Loki;
 using Stopwatch = Robust.Shared.Timing.Stopwatch;
@@ -73,7 +67,8 @@ namespace Robust.Server
 
         [Dependency] private readonly IConfigurationManagerInternal _config = default!;
         [Dependency] private readonly IComponentManager _components = default!;
-        [Dependency] private readonly IServerEntityManager _entities = default!;
+        [Dependency] private readonly IServerEntityManager _entityManager = default!;
+        [Dependency] private readonly IEntityLookup _lookup = default!;
         [Dependency] private readonly ILogManager _log = default!;
         [Dependency] private readonly IRobustSerializer _serializer = default!;
         [Dependency] private readonly IGameTiming _time = default!;
@@ -100,8 +95,8 @@ namespace Robust.Server
         private IGameLoop _mainLoop = default!;
 
         private TimeSpan _lastTitleUpdate;
-        private int _lastReceivedBytes;
-        private int _lastSentBytes;
+        private long _lastReceivedBytes;
+        private long _lastSentBytes;
 
         private string? _shutdownReason;
 
@@ -148,6 +143,10 @@ namespace Robust.Server
         /// <inheritdoc />
         public bool Start(Func<ILogHandler>? logHandlerFactory = null)
         {
+            var profilePath = Path.Join(Environment.CurrentDirectory, "AAAAAAAA");
+            ProfileOptimization.SetProfileRoot(profilePath);
+            ProfileOptimization.StartProfile("AAAAAAAAAA");
+
             _config.Initialize(true);
 
             if (LoadConfigAndUserData)
@@ -184,6 +183,8 @@ namespace Robust.Server
             {
                 _config.OverrideConVars(_commandLineArgs.CVars);
             }
+
+            ProfileOptSetup.Setup(_config);
 
             //Sets up Logging
             _logHandlerFactory = logHandlerFactory;
@@ -236,7 +237,6 @@ namespace Robust.Server
             {
                 netMan.Initialize(true);
                 netMan.StartServer();
-                netMan.RegisterNetMessage<MsgSetTickRate>(MsgSetTickRate.NAME);
             }
             catch (Exception e)
             {
@@ -254,9 +254,12 @@ namespace Robust.Server
             // Set up the VFS
             _resources.Initialize(dataDir);
 
-            ProgramShared.DoMounts(_resources, _commandLineArgs?.MountOptions, "Content.Server");
+            ProgramShared.DoMounts(_resources, _commandLineArgs?.MountOptions, "Content.Server", contentStart:ContentStart);
 
-            _modLoader.SetUseLoadContext(!DisableLoadContext);
+            // When the game is ran with the startup executable being content,
+            // we have to disable the separate load context.
+            // Otherwise the content assemblies will be loaded twice which causes *many* fun bugs.
+            _modLoader.SetUseLoadContext(!ContentStart);
             _modLoader.SetEnableSandboxing(false);
 
             if (!_modLoader.TryLoadModulesFrom(new ResourcePath("/Assemblies/"), "Content."))
@@ -277,17 +280,22 @@ namespace Robust.Server
             // TODO: solve this properly.
             _serializer.Initialize();
 
-            _loc.AddLoadedToStringSerializer();
+            _loc.AddLoadedToStringSerializer(_stringSerializer);
 
             //IoCManager.Resolve<IMapLoader>().LoadedMapData +=
             //    IoCManager.Resolve<IRobustMappedStringSerializer>().AddStrings;
-            IoCManager.Resolve<IPrototypeManager>().LoadedData +=
-                (yaml, name) => _stringSerializer.AddStrings(yaml);
+            IoCManager.Resolve<IPrototypeManager>().LoadedData += (yaml, name) =>
+            {
+                if (!_stringSerializer.Locked)
+                {
+                    _stringSerializer.AddStrings(yaml);
+                }
+            };
 
             // Initialize Tier 2 services
             IoCManager.Resolve<IGameTiming>().InSimulation = true;
 
-            _stateManager.Initialize();
+            IoCManager.Resolve<INetConfigurationManager>().SetupNetworking();
             IoCManager.Resolve<IPlayerManager>().Initialize(MaxPlayers);
             _mapManager.Initialize();
             _mapManager.Startup();
@@ -297,17 +305,21 @@ namespace Robust.Server
 
             // Call Init in game assemblies.
             _modLoader.BroadcastRunLevel(ModRunLevel.Init);
+            _entityManager.Initialize();
+            IoCManager.Resolve<IEntityLookup>().Initialize();
 
-            _entities.Initialize();
+            IoCManager.Resolve<ISerializationManager>().Initialize();
 
             // because of 'reasons' this has to be called after the last assembly is loaded
             // otherwise the prototypes will be cleared
             var prototypeManager = IoCManager.Resolve<IPrototypeManager>();
+            prototypeManager.Initialize();
             prototypeManager.LoadDirectory(new ResourcePath(@"/Prototypes"));
             prototypeManager.Resync();
 
-            IoCManager.Resolve<IConsoleShell>().Initialize();
-            _entities.Startup();
+            IoCManager.Resolve<IServerConsoleHost>().Initialize();
+            _entityManager.Startup();
+            _stateManager.Initialize();
             _scriptHost.Initialize();
 
             _modLoader.BroadcastRunLevel(ModRunLevel.PostInit);
@@ -319,6 +331,13 @@ namespace Robust.Server
             _watchdogApi.Initialize();
 
             _stringSerializer.LockStrings();
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && _config.GetCVar(CVars.SysWinTickPeriod) >= 0)
+            {
+                WindowsTickPeriod.TimeBeginPeriod((uint) _config.GetCVar(CVars.SysWinTickPeriod));
+            }
+
+            GC.Collect();
 
             return false;
         }
@@ -415,7 +434,7 @@ namespace Robust.Server
             _shutdownEvent.Set();
         }
 
-        public bool DisableLoadContext { private get; set; }
+        public bool ContentStart { get; set; }
         public bool LoadConfigAndUserData { private get; set; } = true;
 
         public void OverrideMainLoop(IGameLoop gameLoop)
@@ -459,7 +478,6 @@ namespace Robust.Server
                 _time.TickRate = b;
 
                 Logger.InfoS("game", $"Tickrate changed to: {b} on tick {_time.CurTick}");
-                SendTickRateUpdateToClients(b);
             });
 
             _time.TickRate = (byte) _config.GetCVar(CVars.NetTickrate);
@@ -469,22 +487,17 @@ namespace Robust.Server
             Logger.InfoS("srv", $"Max players: {MaxPlayers}");
         }
 
-        private void SendTickRateUpdateToClients(byte newTickRate)
-        {
-            var msg = _network.CreateNetMessage<MsgSetTickRate>();
-            msg.NewTickRate = newTickRate;
-
-            _network.ServerSendToAll(msg);
-        }
-
         // called right before main loop returns, do all saving/cleanup in here
         private void Cleanup()
         {
+            IoCManager.Resolve<INetConfigurationManager>().FlushMessages();
+
             // shut down networking, kicking all players.
             _network.Shutdown($"Server shutting down: {_shutdownReason}");
 
             // shutdown entities
-            _entities.Shutdown();
+            IoCManager.Resolve<IEntityLookup>().Shutdown();
+            _entityManager.Shutdown();
 
             if (_config.GetCVar(CVars.LogRuntimeLog))
             {
@@ -500,6 +513,11 @@ namespace Robust.Server
             AppDomain.CurrentDomain.ProcessExit -= ProcessExiting;
 
             //TODO: This should prob shutdown all managers in a loop.
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && _config.GetCVar(CVars.SysWinTickPeriod) >= 0)
+            {
+                WindowsTickPeriod.TimeEndPeriod((uint) _config.GetCVar(CVars.SysWinTickPeriod));
+            }
         }
 
         private string UpdateBps()
@@ -528,11 +546,19 @@ namespace Robust.Server
             ServerCurTick.Set(_time.CurTick.Value);
             ServerCurTime.Set(_time.CurTime.TotalSeconds);
 
+            // These are always the same on the server, there is no prediction.
+            _time.LastRealTick = _time.CurTick;
+
             UpdateTitle();
 
             using (TickUsage.WithLabels("PreEngine").NewTimer())
             {
                 _modLoader.BroadcastUpdate(ModUpdateLevel.PreEngine, frameEventArgs);
+            }
+
+            using (TickUsage.WithLabels("NetworkedCVar").NewTimer())
+            {
+                IoCManager.Resolve<INetConfigurationManager>().TickProcessMessages();
             }
 
             using (TickUsage.WithLabels("Timers").NewTimer())
@@ -551,7 +577,9 @@ namespace Robust.Server
             }
 
             // Pass Histogram into the IEntityManager.Update so it can do more granular measuring.
-            _entities.Update(frameEventArgs.DeltaSeconds, TickUsage);
+            _entityManager.TickUpdate(frameEventArgs.DeltaSeconds, TickUsage);
+
+            _lookup.Update();
 
             using (TickUsage.WithLabels("PostEngine").NewTimer())
             {

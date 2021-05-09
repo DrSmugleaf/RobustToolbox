@@ -1,15 +1,15 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using OpenToolkit.Graphics.OpenGL4;
-using Robust.Client.Interfaces.Graphics;
 using Robust.Shared.Maths;
 using Robust.Shared.Utility;
 using Robust.Shared.Log;
+using SixLabors.ImageSharp.PixelFormats;
 
 // ReSharper disable once IdentifierTypo
-using RTCF = Robust.Client.Interfaces.Graphics.RenderTargetColorFormat;
+using RTCF = Robust.Client.Graphics.RenderTargetColorFormat;
 using PIF = OpenToolkit.Graphics.OpenGL4.PixelInternalFormat;
 using PF = OpenToolkit.Graphics.OpenGL4.PixelFormat;
 using PT = OpenToolkit.Graphics.OpenGL4.PixelType;
@@ -24,9 +24,8 @@ namespace Robust.Client.Graphics.Clyde
         private readonly ConcurrentQueue<ClydeHandle> _renderTargetDisposeQueue
             = new();
 
-        IRenderWindow IClyde.MainWindowRenderTarget => _mainWindowRenderTarget;
         // Initialized in Clyde's constructor
-        private readonly RenderWindow _mainWindowRenderTarget;
+        private readonly RenderMainWindow _mainMainWindowRenderMainTarget;
 
         // This is always kept up-to-date, except in CreateRenderTarget (because it restores the old value)
         // It is used for SRGB emulation.
@@ -98,7 +97,7 @@ namespace Robust.Client.Graphics.Clyde
                         case RTCF.RG32F:
                         case RTCF.R11FG11FB10F:
                         case RTCF.Rgba16F:
-                            Logger.WarningS("clyde.ogl", "The framebuffer {0} [{1}] is trying to be floating-point when that's not supported. Forcing Rgba8.", name == null ? "[unnamed]" : name, size);
+                            _sawmillOgl.Warning("The framebuffer {0} [{1}] is trying to be floating-point when that's not supported. Forcing Rgba8.", name == null ? "[unnamed]" : name, size);
                             colorFormat = RTCF.Rgba8;
                             break;
                     }
@@ -192,7 +191,8 @@ namespace Robust.Client.Graphics.Clyde
                 FramebufferHandle = fbo,
                 Size = size,
                 TextureHandle = textureObject.TextureId,
-                MemoryPressure = pressure
+                MemoryPressure = pressure,
+                ColorFormat = format.ColorFormat
             };
 
             //GC.AddMemoryPressure(pressure);
@@ -267,10 +267,10 @@ namespace Robust.Client.Graphics.Clyde
             }
         }
 
-        private void UpdateWindowLoadedRtSize()
+        private void UpdateMainWindowLoadedRtSize()
         {
-            var loadedRt = RtToLoaded(_mainWindowRenderTarget);
-            loadedRt.Size = _framebufferSize;
+            var loadedRt = RtToLoaded(_mainMainWindowRenderMainTarget);
+            loadedRt.Size = _windowing!.MainWindow!.FramebufferSize;
         }
 
         private sealed class LoadedRenderTarget
@@ -278,6 +278,8 @@ namespace Robust.Client.Graphics.Clyde
             public bool IsWindow;
             public Vector2i Size;
             public bool IsSrgb;
+
+            public RTCF ColorFormat;
 
             // Remaining properties only apply if the render target is NOT a window.
             // Handle to the framebuffer object.
@@ -296,6 +298,9 @@ namespace Robust.Client.Graphics.Clyde
             protected readonly Clyde Clyde;
             private bool _disposed;
 
+            public bool MakeGLFence;
+            public nint LastGLSync;
+
             protected RenderTargetBase(Clyde clyde, ClydeHandle handle)
             {
                 Clyde = clyde;
@@ -303,6 +308,12 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             public abstract Vector2i Size { get; }
+
+            public void CopyPixelsToMemory<T>(CopyPixelsDelegate<T> callback, UIBox2i? subRegion = null) where T : unmanaged, IPixel<T>
+            {
+                Clyde.CopyRenderTargetPixels(Handle, subRegion, callback);
+            }
+
             public ClydeHandle Handle { get; }
 
             protected virtual void Dispose(bool disposing)
@@ -319,6 +330,23 @@ namespace Robust.Client.Graphics.Clyde
                 _disposed = true;
                 Dispose(true);
                 GC.SuppressFinalize(this);
+            }
+
+            public void DisposeDeferred()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                DisposeDeferredImpl();
+                GC.SuppressFinalize(this);
+            }
+
+            protected virtual void DisposeDeferredImpl()
+            {
+
             }
 
             ~RenderTargetBase()
@@ -348,16 +376,21 @@ namespace Robust.Client.Graphics.Clyde
                 }
                 else
                 {
-                    Clyde._renderTargetDisposeQueue.Enqueue(Handle);
+                    DisposeDeferredImpl();
                 }
+            }
+
+            protected override void DisposeDeferredImpl()
+            {
+                Clyde._renderTargetDisposeQueue.Enqueue(Handle);
             }
         }
 
-        private sealed class RenderWindow : RenderTargetBase, IRenderWindow
+        private sealed class RenderMainWindow : RenderTargetBase
         {
-            public override Vector2i Size => Clyde._framebufferSize;
+            public override Vector2i Size => Clyde._windowing!.MainWindow!.FramebufferSize;
 
-            public RenderWindow(Clyde clyde, ClydeHandle handle) : base(clyde, handle)
+            public RenderMainWindow(Clyde clyde, ClydeHandle handle) : base(clyde, handle)
             {
             }
         }

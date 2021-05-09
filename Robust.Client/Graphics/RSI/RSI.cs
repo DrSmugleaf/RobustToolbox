@@ -2,11 +2,9 @@
 using System.Collections.Generic;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using Robust.Shared.Maths;
 using Robust.Shared.Utility;
 using Robust.Shared.ViewVariables;
-using SixLabors.ImageSharp.Processing.Processors.Dithering;
 
 namespace Robust.Client.Graphics
 {
@@ -21,7 +19,7 @@ namespace Robust.Client.Graphics
         [ViewVariables]
         public Vector2i Size { get; private set; }
         [ViewVariables]
-        private Dictionary<StateId, State> States = new();
+        private Dictionary<StateId, State> States;
 
         /// <summary>
         ///     The original path of this RSI or null.
@@ -46,10 +44,11 @@ namespace Robust.Client.Graphics
             return States.TryGetValue(stateId, out state);
         }
 
-        public RSI(Vector2i size, ResourcePath? path = null)
+        public RSI(Vector2i size, ResourcePath? path = null, int capacity = 0)
         {
             Size = size;
             Path = path;
+            States = new Dictionary<StateId, State>(capacity);
         }
 
         public IEnumerator<State> GetEnumerator()

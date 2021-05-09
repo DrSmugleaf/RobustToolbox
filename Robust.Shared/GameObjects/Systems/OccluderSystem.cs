@@ -1,16 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using Robust.Shared.GameObjects.Components.Map;
-using Robust.Shared.GameObjects.Components.Transform;
-using Robust.Shared.GameObjects.EntitySystemMessages;
-using Robust.Shared.Interfaces.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using Robust.Shared.Physics;
 
-namespace Robust.Shared.GameObjects.Systems
+namespace Robust.Shared.GameObjects
 {
     public abstract class OccluderSystem : EntitySystem
     {
@@ -197,7 +193,7 @@ namespace Robust.Shared.GameObjects.Systems
             _gridTrees[e.Map] = new Dictionary<GridId, DynamicTree<OccluderComponent>>();
         }
 
-        private void OnGridRemoved(GridId gridId)
+        private void OnGridRemoved(MapId mapId, GridId gridId)
         {
             foreach (var (_, gridIds) in _gridTrees)
             {
@@ -206,10 +202,8 @@ namespace Robust.Shared.GameObjects.Systems
             }
         }
 
-        private void OnGridCreated(GridId gridId)
+        private void OnGridCreated(MapId mapId, GridId gridId)
         {
-            var mapId = _mapManager.GetGrid(gridId).ParentMapId;
-
             if (!_gridTrees.TryGetValue(mapId, out var gridTree))
                 return;
 

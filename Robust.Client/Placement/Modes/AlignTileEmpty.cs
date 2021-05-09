@@ -1,7 +1,5 @@
-﻿using Robust.Shared.IoC;
-using Robust.Client.Interfaces.GameObjects;
-using Robust.Shared.Interfaces.GameObjects;
-using Robust.Shared.Interfaces.Map;
+﻿using Robust.Shared.GameObjects;
+using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 
@@ -55,7 +53,7 @@ namespace Robust.Client.Placement.Modes
             var topRight = new Vector2(CurrentTile.X + 0.99f, CurrentTile.Y + 0.99f);
             var box = new Box2(bottomLeft, topRight);
 
-            return !pManager.EntityManager.AnyEntitiesIntersecting(map, box);
+            return !IoCManager.Resolve<IEntityLookup>().AnyEntitiesIntersecting(map, box);
         }
     }
 }
