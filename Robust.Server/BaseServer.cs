@@ -67,7 +67,8 @@ namespace Robust.Server
 
         [Dependency] private readonly IConfigurationManagerInternal _config = default!;
         [Dependency] private readonly IComponentManager _components = default!;
-        [Dependency] private readonly IServerEntityManager _entities = default!;
+        [Dependency] private readonly IServerEntityManager _entityManager = default!;
+        [Dependency] private readonly IEntityLookup _lookup = default!;
         [Dependency] private readonly ILogManager _log = default!;
         [Dependency] private readonly IRobustSerializer _serializer = default!;
         [Dependency] private readonly IGameTiming _time = default!;
@@ -94,8 +95,8 @@ namespace Robust.Server
         private IGameLoop _mainLoop = default!;
 
         private TimeSpan _lastTitleUpdate;
-        private int _lastReceivedBytes;
-        private int _lastSentBytes;
+        private long _lastReceivedBytes;
+        private long _lastSentBytes;
 
         private string? _shutdownReason;
 
@@ -253,9 +254,12 @@ namespace Robust.Server
             // Set up the VFS
             _resources.Initialize(dataDir);
 
-            ProgramShared.DoMounts(_resources, _commandLineArgs?.MountOptions, "Content.Server");
+            ProgramShared.DoMounts(_resources, _commandLineArgs?.MountOptions, "Content.Server", contentStart:ContentStart);
 
-            _modLoader.SetUseLoadContext(!DisableLoadContext);
+            // When the game is ran with the startup executable being content,
+            // we have to disable the separate load context.
+            // Otherwise the content assemblies will be loaded twice which causes *many* fun bugs.
+            _modLoader.SetUseLoadContext(!ContentStart);
             _modLoader.SetEnableSandboxing(false);
 
             if (!_modLoader.TryLoadModulesFrom(new ResourcePath("/Assemblies/"), "Content."))
@@ -292,8 +296,6 @@ namespace Robust.Server
             IoCManager.Resolve<IGameTiming>().InSimulation = true;
 
             IoCManager.Resolve<INetConfigurationManager>().SetupNetworking();
-
-            _stateManager.Initialize();
             IoCManager.Resolve<IPlayerManager>().Initialize(MaxPlayers);
             _mapManager.Initialize();
             _mapManager.Startup();
@@ -303,8 +305,7 @@ namespace Robust.Server
 
             // Call Init in game assemblies.
             _modLoader.BroadcastRunLevel(ModRunLevel.Init);
-
-            _entities.Initialize();
+            _entityManager.Initialize();
 
             IoCManager.Resolve<ISerializationManager>().Initialize();
 
@@ -316,7 +317,9 @@ namespace Robust.Server
             prototypeManager.Resync();
 
             IoCManager.Resolve<IServerConsoleHost>().Initialize();
-            _entities.Startup();
+            _entityManager.Startup();
+            IoCManager.Resolve<IEntityLookup>().Startup();
+            _stateManager.Initialize();
             _scriptHost.Initialize();
 
             _modLoader.BroadcastRunLevel(ModRunLevel.PostInit);
@@ -431,7 +434,7 @@ namespace Robust.Server
             _shutdownEvent.Set();
         }
 
-        public bool DisableLoadContext { private get; set; }
+        public bool ContentStart { get; set; }
         public bool LoadConfigAndUserData { private get; set; } = true;
 
         public void OverrideMainLoop(IGameLoop gameLoop)
@@ -493,7 +496,8 @@ namespace Robust.Server
             _network.Shutdown($"Server shutting down: {_shutdownReason}");
 
             // shutdown entities
-            _entities.Shutdown();
+            IoCManager.Resolve<IEntityLookup>().Shutdown();
+            _entityManager.Shutdown();
 
             if (_config.GetCVar(CVars.LogRuntimeLog))
             {
@@ -573,7 +577,9 @@ namespace Robust.Server
             }
 
             // Pass Histogram into the IEntityManager.Update so it can do more granular measuring.
-            _entities.Update(frameEventArgs.DeltaSeconds, TickUsage);
+            _entityManager.TickUpdate(frameEventArgs.DeltaSeconds, TickUsage);
+
+            _lookup.Update();
 
             using (TickUsage.WithLabels("PostEngine").NewTimer())
             {

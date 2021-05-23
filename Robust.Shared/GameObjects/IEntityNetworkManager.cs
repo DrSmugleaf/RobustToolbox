@@ -34,6 +34,7 @@ namespace Robust.Shared.GameObjects
         /// <param name="entity">Entity sending the message (also entity to send to).</param>
         /// <param name="component">Component that sent the message.</param>
         /// <param name="message">Message to send.</param>
+        [Obsolete("Component Messages are deprecated, use Entity Events instead.")]
         void SendComponentNetworkMessage(INetChannel? channel, IEntity entity, IComponent component,
             ComponentMessage message);
 
@@ -61,10 +62,5 @@ namespace Robust.Shared.GameObjects
         ///    Thrown if called on the client.
         /// </exception>
         void SendSystemNetworkMessage(EntityEventArgs message, INetChannel channel);
-
-        /// <summary>
-        ///     Sends out queued messages based on current tick.
-        /// </summary>
-        void Update();
     }
 }

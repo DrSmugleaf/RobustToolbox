@@ -176,10 +176,10 @@ namespace Robust.Shared.Network
         {
             get
             {
-                var sentPackets = 0;
-                var sentBytes = 0;
-                var recvPackets = 0;
-                var recvBytes = 0;
+                var sentPackets = 0L;
+                var sentBytes = 0L;
+                var recvPackets = 0L;
+                var recvBytes = 0L;
 
                 foreach (var peer in _netPeers)
                 {
@@ -867,7 +867,15 @@ namespace Robust.Shared.Network
                 return;
             }
 
-            var constructor = packetType.GetConstructor(new[] {typeof(INetChannel)})!;
+            if (!packetType.TryGetCustomAttribute(out NetMessageAttribute? netMsgAttr))
+            {
+                return;
+            }
+
+            var constructor = packetType.GetConstructor(Type.EmptyTypes)!;
+            var nameField = packetType.GetBackingField(nameof(NetMessage.MsgName))!;
+            var groupField = packetType.GetBackingField(nameof(NetMessage.MsgGroup))!;
+            var channelField = packetType.GetBackingField(nameof(NetMessage.MsgChannel))!;
 
             DebugTools.AssertNotNull(constructor);
 
@@ -876,13 +884,27 @@ namespace Robust.Shared.Network
 
             dynamicMethod.DefineParameter(1, ParameterAttributes.In, "channel");
 
-            var gen = dynamicMethod.GetILGenerator();
-            gen.Emit(OpCodes.Ldarg_0);
+            var gen = dynamicMethod.GetILGenerator().GetRobustGen();
+            gen.DeclareLocal(typeof(NetMessage));
+
             gen.Emit(OpCodes.Newobj, constructor);
+            gen.Emit(OpCodes.Stloc_0);
+
+            gen.Emit(OpCodes.Ldloc_0);
+            gen.Emit(OpCodes.Ldstr, netMsgAttr.Name);
+            gen.Emit(OpCodes.Stfld, nameField);
+
+            gen.Emit(OpCodes.Ldloc_0);
+            gen.Emit(OpCodes.Ldc_I4, (int) netMsgAttr.Group);
+            gen.Emit(OpCodes.Stfld, channelField);
+
+            gen.Emit(OpCodes.Ldloc_0);
+            gen.Emit(OpCodes.Ldarg_0);
+            gen.Emit(OpCodes.Stfld, channelField);
+
             gen.Emit(OpCodes.Ret);
 
-            var @delegate =
-                (Func<INetChannel, NetMessage>) dynamicMethod.CreateDelegate(typeof(Func<INetChannel, NetMessage>));
+            var @delegate = dynamicMethod.CreateDelegate<Func<INetChannel, NetMessage>>();
 
             ref var entry = ref _netMsgFunctions[id];
             entry.CreateFunction = @delegate;
@@ -1154,24 +1176,24 @@ namespace Robust.Shared.Network
         /// <summary>
         ///     Total sent bytes.
         /// </summary>
-        public readonly int SentBytes;
+        public readonly long SentBytes;
 
         /// <summary>
         ///     Total received bytes.
         /// </summary>
-        public readonly int ReceivedBytes;
+        public readonly long ReceivedBytes;
 
         /// <summary>
         ///     Total sent packets.
         /// </summary>
-        public readonly int SentPackets;
+        public readonly long SentPackets;
 
         /// <summary>
         ///     Total received packets.
         /// </summary>
-        public readonly int ReceivedPackets;
+        public readonly long ReceivedPackets;
 
-        public NetworkStats(int sentBytes, int receivedBytes, int sentPackets, int receivedPackets)
+        public NetworkStats(long sentBytes, long receivedBytes, long sentPackets, long receivedPackets)
         {
             SentBytes = sentBytes;
             ReceivedBytes = receivedBytes;

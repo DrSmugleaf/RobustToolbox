@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -15,7 +15,9 @@ using Robust.Shared.Serialization;
 using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Serialization.Manager.Result;
 using Robust.Shared.Serialization.Markdown;
+using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Validation;
+using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Interfaces;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
@@ -440,7 +442,12 @@ namespace Robust.Server.Maps
                 foreach (var grid in Grids)
                 {
                     var entity = _serverEntityManager.GetEntity(grid.GridEntityId);
+                    if (entity.Transform.Parent != null)
+                        continue;
+
+                    var mapOffset = entity.Transform.LocalPosition;
                     entity.Transform.AttachParent(mapEntity);
+                    entity.Transform.WorldPosition = mapOffset;
                 }
             }
 
@@ -590,17 +597,7 @@ namespace Robust.Server.Maps
             {
                 foreach (var entity in Entities)
                 {
-                    _serverEntityManager.UpdateEntityTree(entity);
-                }
-
-                foreach (var entity in Entities)
-                {
                     _serverEntityManager.FinishEntityStartup(entity);
-                }
-
-                foreach (var entity in Entities)
-                {
-                    _serverEntityManager.UpdateEntityTree(entity);
                 }
             }
 
@@ -772,7 +769,7 @@ namespace Robust.Server.Maps
                         // Don't need to write it if nothing was written!
                         if (compMapping.Children.Count != 0)
                         {
-                            compMapping.AddNode("type", new ValueDataNode(component.Name));
+                            compMapping.Add("type", new ValueDataNode(component.Name));
                             // Something actually got written!
                             components.Add(compMapping.ToYamlNode());
                         }

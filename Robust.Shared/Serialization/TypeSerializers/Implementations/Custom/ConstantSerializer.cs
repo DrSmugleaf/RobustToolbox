@@ -4,6 +4,7 @@ using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Serialization.Manager.Result;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Validation;
+using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Interfaces;
 
 namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Custom
@@ -21,7 +22,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Custom
             IDependencyCollection dependencies, bool skipHook, ISerializationContext? context = null)
         {
             var constType = serializationManager.GetConstantTypeFromTag(typeof(TTag));
-            return DeserializationResult.Value((int) Enum.Parse(constType, node.Value));
+            return new DeserializedValue((int) Enum.Parse(constType, node.Value));
         }
 
         public DataNode Write(ISerializationManager serializationManager, int value, bool alwaysWrite = false,

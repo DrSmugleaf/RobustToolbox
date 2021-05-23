@@ -17,6 +17,7 @@ using Robust.Shared;
 using Robust.Shared.Configuration;
 using Robust.Shared.ContentPack;
 using Robust.Shared.IoC;
+using Robust.Shared.Log;
 using Robust.Shared.Network;
 using Robust.Shared.Timing;
 using ServerProgram = Robust.Server.Program;
@@ -354,7 +355,9 @@ namespace Robust.UnitTesting
 
                     cfg.OverrideConVars(new []{("log.runtimelog", "false"), (CVars.SysWinTickPeriod.Name, "-1")});
 
-                    if (server.Start(() => new TestLogHandler("SERVER")))
+                    var failureLevel = _options == null ? LogLevel.Error : _options.FailureLogLevel;
+                    server.ContentStart = _options?.ContentStart ?? false;
+                    if (server.Start(() => new TestLogHandler("SERVER", failureLevel)))
                     {
                         throw new Exception("Server failed to start.");
                     }
@@ -446,12 +449,13 @@ namespace Robust.UnitTesting
 
                     cfg.OverrideConVars(new []{(CVars.NetPredictLagBias.Name, "0")});
 
-                    client.Startup(() => new TestLogHandler("CLIENT"));
-
                     var gameLoop = new IntegrationGameLoop(DependencyCollection.Resolve<IGameTiming>(),
                         _fromInstanceWriter, _toInstanceReader);
+
+                    var failureLevel = _options == null ? LogLevel.Error : _options.FailureLogLevel;
                     client.OverrideMainLoop(gameLoop);
-                    client.MainLoop(GameController.DisplayMode.Headless);
+                    client.ContentStart = true;
+                    client.Run(GameController.DisplayMode.Headless, () => new TestLogHandler("CLIENT", failureLevel));
                 }
                 catch (Exception e)
                 {
@@ -562,6 +566,8 @@ namespace Robust.UnitTesting
             public Action? BeforeStart { get; set; }
             public Assembly[]? ContentAssemblies { get; set; }
             public string? ExtraPrototypes { get; set; }
+            public LogLevel? FailureLogLevel { get; set; } = LogLevel.Error;
+            public bool ContentStart { get; set; } = false;
 
             public Dictionary<string, string> CVarOverrides { get; } = new();
         }

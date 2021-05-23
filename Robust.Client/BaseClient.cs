@@ -8,10 +8,12 @@ using Robust.Client.Utility;
 using Robust.Shared;
 using Robust.Shared.Configuration;
 using Robust.Shared.Enums;
+using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Network;
+using Robust.Shared.Players;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 
@@ -24,6 +26,7 @@ namespace Robust.Client
         [Dependency] private readonly IPlayerManager _playMan = default!;
         [Dependency] private readonly INetConfigurationManager _configManager = default!;
         [Dependency] private readonly IClientEntityManager _entityManager = default!;
+        [Dependency] private readonly IEntityLookup _entityLookup = default!;
         [Dependency] private readonly IMapManager _mapManager = default!;
         [Dependency] private readonly IDiscordRichPresence _discord = default!;
         [Dependency] private readonly IGameTiming _timing = default!;
@@ -97,6 +100,25 @@ namespace Robust.Client
         }
 
         /// <inheritdoc />
+        public void StartSinglePlayer()
+        {
+            DebugTools.Assert(RunLevel < ClientRunLevel.Connecting);
+            DebugTools.Assert(!_net.IsConnected);
+            _playMan.Startup();
+            _playMan.LocalPlayer!.Name = PlayerNameOverride ?? _configManager.GetCVar(CVars.PlayerName);
+            OnRunLevelChanged(ClientRunLevel.SinglePlayerGame);
+            GameStartedSetup();
+        }
+
+        /// <inheritdoc />
+        public void StopSinglePlayer()
+        {
+            DebugTools.Assert(RunLevel == ClientRunLevel.SinglePlayerGame);
+            DebugTools.Assert(!_net.IsConnected);
+            GameStoppedReset();
+        }
+
+        /// <inheritdoc />
         public event EventHandler<RunLevelChangedEventArgs>? RunLevelChanged;
 
         public event EventHandler<PlayerEventArgs>? PlayerJoinedServer;
@@ -132,7 +154,7 @@ namespace Robust.Client
             var userId = _net.ServerChannel.UserId;
             _discord.Update(info.ServerName, userName, info.ServerMaxPlayers.ToString());
             // start up player management
-            _playMan.Startup(_net.ServerChannel!);
+            _playMan.Startup();
 
             _playMan.LocalPlayer!.UserId = userId;
             _playMan.LocalPlayer.Name = userName;
@@ -145,16 +167,13 @@ namespace Robust.Client
         ///     receiving states when they join the lobby.
         /// </summary>
         /// <param name="session">Session of the player.</param>
-        private void OnPlayerJoinedServer(IPlayerSession session)
+        private void OnPlayerJoinedServer(ICommonSession session)
         {
             DebugTools.Assert(RunLevel < ClientRunLevel.Connected);
             OnRunLevelChanged(ClientRunLevel.Connected);
 
-            _entityManager.Startup();
-            _mapManager.Startup();
+            GameStartedSetup();
 
-            _timing.ResetSimTime();
-            _timing.Paused = false;
             PlayerJoinedServer?.Invoke(this, new PlayerEventArgs(session));
         }
 
@@ -162,7 +181,7 @@ namespace Robust.Client
         ///     Player is joining the game
         /// </summary>
         /// <param name="session">Session of the player.</param>
-        private void OnPlayerJoinedGame(IPlayerSession session)
+        private void OnPlayerJoinedGame(ICommonSession session)
         {
             DebugTools.Assert(RunLevel >= ClientRunLevel.Connected);
             OnRunLevelChanged(ClientRunLevel.InGame);
@@ -189,10 +208,25 @@ namespace Robust.Client
             PlayerLeaveServer?.Invoke(this, new PlayerEventArgs(_playMan.LocalPlayer?.Session));
 
             LastDisconnectReason = args.Reason;
+            GameStoppedReset();
+        }
 
+        private void GameStartedSetup()
+        {
+            _entityManager.Startup();
+            _mapManager.Startup();
+            _entityLookup.Startup();
+
+            _timing.ResetSimTime();
+            _timing.Paused = false;
+        }
+
+        private void GameStoppedReset()
+        {
             IoCManager.Resolve<INetConfigurationManager>().FlushMessages();
             _gameStates.Reset();
             _playMan.Shutdown();
+            _entityLookup.Shutdown();
             _entityManager.Shutdown();
             _mapManager.Shutdown();
             _discord.ClearPresence();
@@ -249,6 +283,11 @@ namespace Robust.Client
         ///     The client is now in the game, moving around.
         /// </summary>
         InGame,
+
+        /// <summary>
+        ///     The client is now in singleplayer mode, in-game.
+        /// </summary>
+        SinglePlayerGame,
     }
 
     /// <summary>
@@ -259,12 +298,12 @@ namespace Robust.Client
         /// <summary>
         ///     The session that triggered the event.
         /// </summary>
-        private IPlayerSession? Session { get; }
+        private ICommonSession? Session { get; }
 
         /// <summary>
         ///     Constructs a new instance of the class.
         /// </summary>
-        public PlayerEventArgs(IPlayerSession? session)
+        public PlayerEventArgs(ICommonSession? session)
         {
             Session = session;
         }

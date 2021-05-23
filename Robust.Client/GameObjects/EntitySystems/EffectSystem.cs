@@ -67,9 +67,10 @@ namespace Robust.Client.GameObjects
             //Create effect from creation message
             var effect = new Effect(message, resourceCache, _mapManager, _entityManager);
             effect.Deathtime = gameTiming.CurTime + message.LifeTime;
-            if (effect.AttachedEntityUid != null)
+            if (effect.AttachedEntityUid != null
+                && _entityManager.TryGetEntity(effect.AttachedEntityUid.Value, out var attachedEntity))
             {
-                effect.AttachedEntity = _entityManager.GetEntity(effect.AttachedEntityUid.Value);
+                effect.AttachedEntity = attachedEntity;
             }
 
             _Effects.Add(effect);
@@ -346,11 +347,11 @@ namespace Robust.Client.GameObjects
                 _entityManager = entityManager;
             }
 
-            protected override void Draw(DrawingHandleBase handle, OverlaySpace currentSpace)
+            protected internal override void Draw(in OverlayDrawArgs args)
             {
                 var map = _owner.eyeManager.CurrentMap;
 
-                var worldHandle = (DrawingHandleWorld) handle;
+                var worldHandle = args.WorldHandle;
                 ShaderInstance? currentShader = null;
                 var player = _playerManager.LocalPlayer?.ControlledEntity;
 

@@ -7,6 +7,7 @@ using Robust.Shared.Containers;
 using Robust.Shared.ContentPack;
 using Robust.Shared.IoC;
 using Robust.Shared.Map;
+using Robust.Shared.Maths;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Collision;
 using Robust.Shared.Physics.Controllers;
@@ -80,7 +81,7 @@ namespace Robust.Shared.GameObjects
         internal IReadOnlyList<VirtualController> Controllers => _controllers;
         private List<VirtualController> _controllers = new();
 
-        public Action<IPhysBody, IPhysBody, float, Manifold>? KinematicControllerCollision;
+        public Action<Fixture, Fixture, float, Manifold>? KinematicControllerCollision;
 
         public bool MetricsEnabled;
         private readonly Stopwatch _stopwatch = new();
@@ -167,14 +168,6 @@ namespace Robust.Shared.GameObjects
 
             _mapManager.MapCreated -= HandleMapCreated;
             _mapManager.MapDestroyed -= HandleMapDestroyed;
-
-            UnsubscribeLocalEvent<PhysicsUpdateMessage>();
-            UnsubscribeLocalEvent<PhysicsWakeMessage>();
-            UnsubscribeLocalEvent<PhysicsSleepMessage>();
-            UnsubscribeLocalEvent<EntMapIdChangedMessage>();
-
-            UnsubscribeLocalEvent<EntInsertedIntoContainerMessage>();
-            UnsubscribeLocalEvent<EntRemovedFromContainerMessage>();
         }
 
         private void HandleMapCreated(object? sender, MapEventArgs eventArgs)
@@ -260,6 +253,8 @@ namespace Robust.Shared.GameObjects
 
             var mapId = message.Container.Owner.Transform.MapID;
 
+            physicsComponent.LinearVelocity = Vector2.Zero;
+            physicsComponent.AngularVelocity = 0.0f;
             physicsComponent.ClearJoints();
             _maps[mapId].RemoveBody(physicsComponent);
         }

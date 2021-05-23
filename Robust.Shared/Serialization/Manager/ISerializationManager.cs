@@ -15,6 +15,11 @@ namespace Robust.Shared.Serialization.Manager
         void Initialize();
 
         /// <summary>
+        ///     Shuts down the serialization manager.
+        /// </summary>
+        void Shutdown();
+
+        /// <summary>
         ///     Checks if a type has a data definition defined for it.
         /// </summary>
         /// <param name="type">The type to check for.</param>
@@ -46,7 +51,11 @@ namespace Robust.Shared.Serialization.Manager
         /// </returns>
         ValidationNode ValidateNode<T>(DataNode node, ISerializationContext? context = null);
 
-        ValidationNode ValidateNodeWithCustomTypeSerializer(Type type, Type typeSerializer, DataNode node, ISerializationContext? context = null);
+        ValidationNode ValidateNodeWith(Type type, Type typeSerializer, DataNode node, ISerializationContext? context = null);
+
+        ValidationNode ValidateNodeWith<TType, TSerializer, TNode>(TNode node, ISerializationContext? context = null)
+            where TSerializer : ITypeValidator<TType, TNode>
+            where TNode : DataNode;
 
         #endregion
 
@@ -86,7 +95,6 @@ namespace Robust.Shared.Serialization.Manager
         #endregion
 
         #region Read
-
         /// <summary>
         ///     Deserializes a node into an object, populating it.
         /// </summary>

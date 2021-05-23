@@ -220,11 +220,25 @@ stored in a single array since multiple arrays lead to multiple misses.
             _velocityIterations = _configManager.GetCVar(CVars.VelocityIterations);
             _configManager.OnValueChanged(CVars.VelocityIterations, value => _velocityIterations = value);
 
-            _maxLinearVelocity = _configManager.GetCVar(CVars.MaxLinVelocity);
-            _configManager.OnValueChanged(CVars.MaxLinVelocity, value => _maxLinearVelocity = value);
+            _configManager.OnValueChanged(CVars.MaxLinVelocity, value => SetMaxLinearVelocity(value, null));
+            _configManager.OnValueChanged(CVars.NetTickrate, value => SetMaxLinearVelocity(null, value));
+            void SetMaxLinearVelocity(float? maxLinVelocity = null, int? tickrate = null)
+            {
+                maxLinVelocity ??= _configManager.GetCVar(CVars.MaxLinVelocity);
+                tickrate ??= _configManager.GetCVar(CVars.NetTickrate);
+                _maxLinearVelocity = (float)(maxLinVelocity / tickrate);
+            }
+            SetMaxLinearVelocity();
 
-            _maxAngularVelocity = _configManager.GetCVar(CVars.MaxAngVelocity);
-            _configManager.OnValueChanged(CVars.MaxAngVelocity, value => _maxAngularVelocity = value);
+            _configManager.OnValueChanged(CVars.MaxAngVelocity, value => SetMaxAngularVelocity(value, null));
+            _configManager.OnValueChanged(CVars.NetTickrate, value => SetMaxAngularVelocity(null, value));
+            void SetMaxAngularVelocity(float? maxAngVelocity = null, int? tickrate = null)
+            {
+                maxAngVelocity ??= _configManager.GetCVar(CVars.MaxAngVelocity);
+                tickrate ??= _configManager.GetCVar(CVars.NetTickrate);
+                _maxAngularVelocity = (float)((MathF.PI * 2 * maxAngVelocity) / tickrate);
+            }
+            SetMaxAngularVelocity();
 
             _positionIterations = _configManager.GetCVar(CVars.PositionIterations);
             _configManager.OnValueChanged(CVars.PositionIterations, value => _positionIterations = value);
@@ -470,25 +484,38 @@ stored in a single array since multiple arrays lead to multiple misses.
                 var bodyPos = _positions[i];
                 var angle = _angles[i];
 
-                // body.Sweep.Center = bodyPos;
-                // body.Sweep.Angle = angle;
-
-                // DebugTools.Assert(!float.IsNaN(bodyPos.X) && !float.IsNaN(bodyPos.Y));
-                var transform = body.Owner.Transform;
-
-                // Defer MoveEvent / RotateEvent until the end of the physics step so cache can be better.
-                transform.DeferUpdates = true;
-                transform.WorldPosition = bodyPos;
-                transform.WorldRotation = angle;
-                transform.DeferUpdates = false;
-
-                if (transform.UpdatesDeferred)
+                // Temporary NaN guards until PVS is fixed.
+                if (!float.IsNaN(bodyPos.X) && !float.IsNaN(bodyPos.Y))
                 {
-                    deferredUpdates.Add((transform, body));
+                    // body.Sweep.Center = bodyPos;
+                    // body.Sweep.Angle = angle;
+
+                    // DebugTools.Assert(!float.IsNaN(bodyPos.X) && !float.IsNaN(bodyPos.Y));
+                    var transform = body.Owner.Transform;
+
+                    // Defer MoveEvent / RotateEvent until the end of the physics step so cache can be better.
+                    transform.DeferUpdates = true;
+                    transform.WorldPosition = bodyPos;
+                    transform.WorldRotation = angle;
+                    transform.DeferUpdates = false;
+
+                    if (transform.UpdatesDeferred)
+                    {
+                        deferredUpdates.Add((transform, body));
+                    }
                 }
 
-                body.LinearVelocity = _linearVelocities[i];
-                body.AngularVelocity = _angularVelocities[i];
+                var linVelocity = _linearVelocities[i];
+
+                if (!float.IsNaN(linVelocity.X) && !float.IsNaN(linVelocity.Y))
+                {
+                    body.LinearVelocity = linVelocity;
+                }
+
+                if (!float.IsNaN(_angularVelocities[i]))
+                {
+                    body.AngularVelocity = _angularVelocities[i];
+                }
             }
 
             // Sleep bodies if needed. Prediction won't accumulate sleep-time for bodies.

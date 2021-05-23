@@ -80,7 +80,7 @@ namespace Robust.Shared.GameObjects
         }
 
         /// <inheritdoc />
-        public bool TryGetEntitySystem<T>([MaybeNullWhen(false)] out T entitySystem)
+        public bool TryGetEntitySystem<T>([NotNullWhen(true)] out T? entitySystem)
             where T : IEntitySystem
         {
             if (_systems.TryGetValue(typeof(T), out var system))
@@ -251,7 +251,7 @@ namespace Robust.Shared.GameObjects
         }
 
         /// <inheritdoc />
-        public void Update(float frameTime)
+        public void TickUpdate(float frameTime)
         {
             foreach (var updReg in _updateOrder)
             {

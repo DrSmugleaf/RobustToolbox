@@ -7,25 +7,6 @@ using Robust.Shared.Serialization;
 namespace Robust.Shared.GameObjects
 {
     /// <summary>
-    ///     Called every tick for colliding bodies. Called once per pair.
-    /// </summary>
-    public sealed class CollisionMessage : EntityEventArgs
-    {
-        public readonly IPhysBody BodyA;
-        public readonly IPhysBody BodyB;
-        public readonly float FrameTime;
-        public readonly Manifold Manifold;
-
-        public CollisionMessage(IPhysBody bodyA, IPhysBody bodyB, float frameTime, Manifold manifold)
-        {
-            BodyA = bodyA;
-            BodyB = bodyB;
-            FrameTime = frameTime;
-            Manifold = manifold;
-        }
-    }
-
-    /// <summary>
     ///     Called once when a collision starts
     /// </summary>
     public interface IStartCollide
@@ -33,7 +14,8 @@ namespace Robust.Shared.GameObjects
         /// <summary>
         ///     We'll pass in both our body and the other body to save the behaviors having to get these components themselves.
         /// </summary>
-        void CollideWith(IPhysBody ourBody, IPhysBody otherBody, in Manifold manifold);
+        [Obsolete("Use StartCollideEvent instead")]
+        void CollideWith(Fixture ourFixture, Fixture otherFixture, in Manifold manifold);
     }
 
     /// <summary>
@@ -44,14 +26,13 @@ namespace Robust.Shared.GameObjects
         /// <summary>
         ///     Run behaviour after all other collision behaviors have run.
         /// </summary>
-        /// <param name="ourBody"></param>
-        /// <param name="otherBody"></param>
-        /// <param name="manifold"></param>
-        void CollideWith(IPhysBody ourBody, IPhysBody otherBody, in Manifold manifold);
+        [Obsolete("Use EndCollideEvent instead")]
+        void CollideWith(Fixture ourFixture, Fixture otherFixture, in Manifold manifold);
     }
 
     public interface ICollideSpecial
     {
+        [Obsolete("Use PreventCollideEvent instead")]
         bool PreventCollide(IPhysBody collidedwith);
     }
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using JetBrains.Annotations;
 using Robust.Shared.Animations;
 using Robust.Shared.Map;
@@ -93,9 +94,6 @@ namespace Robust.Shared.GameObjects
         /// </summary>
         bool IsMapTransform { get; }
 
-        /// <summary>
-        ///
-        /// </summary>
         Vector2? LerpDestination { get; }
 
         /// <summary>
@@ -118,8 +116,6 @@ namespace Robust.Shared.GameObjects
         /// </summary>
         GridId GridID { get; }
 
-        bool UpdateEntityTree(Box2? worldAABB = null);
-
         void AttachToGridOrMap();
         void AttachParent(ITransformComponent parent);
         void AttachParent(IEntity parent);
@@ -127,6 +123,12 @@ namespace Robust.Shared.GameObjects
         IEnumerable<ITransformComponent> Children { get; }
         int ChildCount { get; }
         IEnumerable<EntityUid> ChildEntityUids { get; }
+
+        /// <summary>
+        /// Is this transform anchored to a grid tile?
+        /// </summary>
+        bool Anchored { get; set; }
+
         Matrix3 GetLocalMatrix();
         Matrix3 GetLocalMatrixInv();
         void DetachParentToNull();

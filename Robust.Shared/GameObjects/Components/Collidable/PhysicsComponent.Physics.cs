@@ -45,7 +45,7 @@ namespace Robust.Shared.GameObjects
     [ComponentReference(typeof(IPhysBody))]
     public sealed class PhysicsComponent : Component, IPhysBody, ISerializationHooks
     {
-        [DataField("status")]
+        [DataField("status", readOnly: true)]
         private BodyStatus _bodyStatus = BodyStatus.OnGround;
 
         /// <inheritdoc />
@@ -85,10 +85,6 @@ namespace Robust.Shared.GameObjects
         // Though not sure how to do it well with the linked-list.
 
         public bool IgnorePaused { get; set; }
-        public IEntity Entity => Owner;
-
-        /// <inheritdoc />
-        public MapId MapID => Owner.Transform.MapID;
 
         internal PhysicsMap PhysicsMap { get; set; } = default!;
 
@@ -102,41 +98,46 @@ namespace Robust.Shared.GameObjects
                 if (_bodyType == value)
                     return;
 
-                var oldAnchored = _bodyType == BodyType.Static;
+                var oldType = _bodyType;
                 _bodyType = value;
 
                 ResetMassData();
 
                 if (_bodyType == BodyType.Static)
                 {
-                    Awake = false;
+                    SetAwake(false);
                     _linVelocity = Vector2.Zero;
                     _angVelocity = 0.0f;
                     // SynchronizeFixtures(); TODO: When CCD
                 }
                 else
                 {
-                    Awake = true;
-                }     
+                    SetAwake(true);
+                }
 
                 Force = Vector2.Zero;
                 Torque = 0.0f;
 
                 RegenerateContacts();
 
-                var anchored = value == BodyType.Static;
-
-                if (oldAnchored != anchored)
-                {
-                    AnchoredChanged?.Invoke();
-                    SendMessage(new AnchoredChangedMessage(Anchored));
-                }
+                Owner.EntityManager.EventBus.RaiseLocalEvent(Owner.Uid, new PhysicsBodyTypeChangedEvent(_bodyType, oldType), false);
             }
         }
 
 
         [DataField("bodyType")]
         private BodyType _bodyType = BodyType.Static;
+
+        /// <summary>
+        /// Set awake without the sleeptimer being reset.
+        /// </summary>
+        internal void ForceAwake()
+        {
+            if (_awake || _bodyType == BodyType.Static) return;
+
+            _awake = true;
+            Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new PhysicsWakeMessage(this));
+        }
 
         // We'll also block Static bodies from ever being awake given they don't need to move.
         /// <inheritdoc />
@@ -146,28 +147,33 @@ namespace Robust.Shared.GameObjects
             get => _awake;
             set
             {
-                if (_awake == value)
-                    return;
+                if (_bodyType == BodyType.Static) return;
 
-                _awake = value;
-
-                if (value)
-                {
-                    _sleepTime = 0.0f;
-                    Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new PhysicsWakeMessage(this));
-                }
-                else
-                {
-                    Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new PhysicsSleepMessage(this));
-                    ResetDynamics();
-                    _sleepTime = 0.0f;
-                }
-
-                Dirty();
+                SetAwake(value);
             }
         }
 
         private bool _awake = true;
+
+        private void SetAwake(bool value)
+        {
+            if (_awake == value) return;
+            _awake = value;
+
+            if (value)
+            {
+                _sleepTime = 0.0f;
+                Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new PhysicsWakeMessage(this));
+            }
+            else
+            {
+                Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new PhysicsSleepMessage(this));
+                ResetDynamics();
+                _sleepTime = 0.0f;
+            }
+
+            Dirty();
+        }
 
         /// <summary>
         /// You can disable sleeping on this body. If you disable sleeping, the
@@ -254,9 +260,16 @@ namespace Robust.Shared.GameObjects
             foreach (var fixture in _fixtures)
             {
                 fixture.Body = this;
+                fixture.ComputeProperties();
+                if (string.IsNullOrEmpty(fixture.Name))
+                {
+                    fixture.Name = GetFixtureName(fixture);
+                }
             }
 
-            if (_mass > 0f && (BodyType & BodyType.Dynamic | BodyType.KinematicController) != 0)
+            ResetMassData();
+
+            if (_mass > 0f && (BodyType & (BodyType.Dynamic | BodyType.KinematicController)) != 0)
             {
                 _invMass = 1.0f / _mass;
             }
@@ -288,7 +301,6 @@ namespace Robust.Shared.GameObjects
 
             // So transform doesn't apply MapId in the HandleComponentState because ??? so MapId can still be 0.
             // Fucking kill me, please. You have no idea deep the rabbit hole of shitcode goes to make this work.
-            // PJB, please forgive me and come up with something better.
 
             // We will pray that this deferred joint is handled properly.
 
@@ -346,39 +358,73 @@ namespace Robust.Shared.GameObjects
 
             var toAdd = new List<Fixture>();
             var toRemove = new List<Fixture>();
+            var computeProperties = false;
 
-            // TODO: This diffing is crude (muh ordering) but at least it will save the broadphase updates 90% of the time.
-            for (var i = 0; i < newState.Fixtures.Count; i++)
+            // Given a bunch of data isn't serialized need to sort of re-initialise it
+            var newFixtures = new List<Fixture>(newState.Fixtures.Count);
+            foreach (var fixture in newState.Fixtures)
             {
                 var newFixture = new Fixture();
-                newState.Fixtures[i].CopyTo(newFixture);
-
+                fixture.CopyTo(newFixture);
                 newFixture.Body = this;
+                newFixtures.Add(newFixture);
+            }
 
-                // Existing fixture
-                if (_fixtures.Count > i)
+            // Add / update new fixtures
+            foreach (var fixture in newFixtures)
+            {
+                var found = false;
+
+                foreach (var existing in _fixtures)
                 {
-                    var existingFixture = _fixtures[i];
+                    if (!fixture.Name.Equals(existing.Name)) continue;
 
-                    if (!existingFixture.Equals(newFixture))
+                    if (!fixture.Equals(existing))
                     {
-                        toRemove.Add(existingFixture);
-                        toAdd.Add(newFixture);
+                        toAdd.Add(fixture);
+                        toRemove.Add(existing);
+                    }
+
+                    found = true;
+                    break;
+                }
+
+                if (!found)
+                {
+                    toAdd.Add(fixture);
+                }
+            }
+
+            // Remove old fixtures
+            foreach (var existing in _fixtures)
+            {
+                var found = false;
+
+                foreach (var fixture in newFixtures)
+                {
+                    if (fixture.Name.Equals(existing.Name))
+                    {
+                        found = true;
+                        break;
                     }
                 }
-                else
+
+                if (!found)
                 {
-                    toAdd.Add(newFixture);
+                    toRemove.Add(existing);
                 }
             }
 
             foreach (var fixture in toRemove)
             {
+                computeProperties = true;
                 RemoveFixture(fixture);
             }
 
+            // TODO: We also still need event listeners for shapes (Probably need C# events)
             foreach (var fixture in toAdd)
             {
+                computeProperties = true;
                 AddFixture(fixture);
                 fixture.Shape.ApplyState();
             }
@@ -388,14 +434,34 @@ namespace Robust.Shared.GameObjects
              */
 
             Dirty();
-            // TODO: Should transform just be doing this??? UpdateEntityTree();
-            Mass = newState.Mass / 1000f; // gram to kilogram
+            if (computeProperties)
+            {
+                ResetMassData();
+            }
 
             LinearVelocity = newState.LinearVelocity;
             // Logger.Debug($"{IGameTiming.TickStampStatic}: [{Owner}] {LinearVelocity}");
             AngularVelocity = newState.AngularVelocity;
             BodyType = newState.BodyType;
             Predict = false;
+        }
+
+        public Fixture? GetFixture(string name)
+        {
+            // Sooo I'd rather have fixtures as a list in serialization but there's not really an easy way to have it as a
+            // temporary value on deserialization so we can store it as a dictionary of <name, fixture>
+            // given 100% of bodies have 1-2 fixtures this isn't really a performance problem right now but
+            // should probably be done at some stage
+            // If we really need it then you just deserialize onto a dummy field that then just never gets used again.
+            foreach (var fixture in _fixtures)
+            {
+                if (fixture.Name.Equals(name))
+                {
+                    return fixture;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -411,7 +477,7 @@ namespace Robust.Shared.GameObjects
             Dirty();
         }
 
-        public Box2 GetWorldAABB(IMapManager? mapManager)
+        public Box2 GetWorldAABB(IMapManager? mapManager = null)
         {
             mapManager ??= IoCManager.Resolve<IMapManager>();
             var bounds = new Box2();
@@ -445,6 +511,20 @@ namespace Robust.Shared.GameObjects
         /// <inheritdoc />
         [ViewVariables]
         public IReadOnlyList<Fixture> Fixtures => _fixtures;
+
+        public IEnumerable<Joint> Joints
+        {
+            get
+            {
+                JointEdge? edge = JointEdges;
+
+                while (edge != null)
+                {
+                    yield return edge.Joint;
+                    edge = edge.Next;
+                }
+            }
+        }
 
         [DataField("fixtures")]
         [NeverPushInheritance]
@@ -539,34 +619,14 @@ namespace Robust.Shared.GameObjects
         [ViewVariables]
         public bool HasProxies { get; set; }
 
+        // I made Mass read-only just because overwriting it doesn't touch inertia.
         /// <summary>
         ///     Current mass of the entity in kilograms.
         /// </summary>
         [ViewVariables(VVAccess.ReadWrite)]
-        public float Mass
-        {
-            get => (BodyType & (BodyType.Dynamic | BodyType.KinematicController)) != 0 ? _mass : 0.0f;
-            set
-            {
-                DebugTools.Assert(!float.IsNaN(value));
+        public float Mass => (BodyType & (BodyType.Dynamic | BodyType.KinematicController)) != 0 ? _mass : 0.0f;
 
-                if (MathHelper.CloseTo(_mass, value))
-                    return;
-
-                // Box2D blocks it if it's dynamic but in case objects can flip-flop between dynamic and static easily via anchoring.
-                // So we may as well support it and just guard the InvMass get
-                _mass = value;
-
-                if (_mass <= 0.0f)
-                    _mass = 1.0f;
-
-                _invMass = 1.0f / _mass;
-                Dirty();
-            }
-        }
-
-        [DataField("mass")]
-        private float _mass = 1.0f;
+        private float _mass;
 
         /// <summary>
         ///     Inverse mass of the entity in kilograms (1 / Mass).
@@ -660,7 +720,7 @@ namespace Robust.Shared.GameObjects
             }
         }
 
-        private Vector2 _localCenter;
+        private Vector2 _localCenter = Vector2.Zero;
 
         /// <summary>
         /// Current Force being applied to this entity in Newtons.
@@ -832,39 +892,6 @@ namespace Robust.Shared.GameObjects
             }
         }
 
-        /// <summary>
-        ///     Whether or not the entity is anchored in place.
-        /// </summary>
-        [ViewVariables(VVAccess.ReadWrite)]
-        [Obsolete("Use BodyType.Static instead")]
-        public bool Anchored
-        {
-            get => BodyType == BodyType.Static;
-            set
-            {
-                var anchored = BodyType == BodyType.Static;
-
-                if (anchored == value)
-                    return;
-
-                if (value)
-                {
-                    _bodyType = BodyType.Static;
-                }
-                else
-                {
-                    _bodyType = BodyType.Dynamic;
-                }
-
-                AnchoredChanged?.Invoke();
-                SendMessage(new AnchoredChangedMessage(Anchored));
-                Dirty();
-            }
-        }
-
-        [Obsolete("Use AnchoredChangedMessage instead")]
-        public event Action? AnchoredChanged;
-
         [ViewVariables(VVAccess.ReadWrite)]
         public bool Predict
         {
@@ -941,6 +968,12 @@ namespace Robust.Shared.GameObjects
             Owner.EntityManager.EventBus.RaiseEvent(EventSource.Local, new FixtureUpdateMessage(this, fixture));
         }
 
+        internal string GetFixtureName(Fixture fixture)
+        {
+            // For any fixtures that aren't named in the code we will assign one.
+            return $"fixture-{_fixtures.IndexOf(fixture)}";
+        }
+
         internal Transform GetTransform()
         {
             return new(Owner.Transform.WorldPosition, (float) Owner.Transform.WorldRotation.Theta);
@@ -968,28 +1001,6 @@ namespace Robust.Shared.GameObjects
 
             Awake = true;
             Force += force;
-        }
-
-        /// <summary>
-        ///     Calculate our AABB without using proxies.
-        /// </summary>
-        /// <returns></returns>
-        public Box2 GetWorldAABB()
-        {
-            var mapId = Owner.Transform.MapID;
-            if (mapId == MapId.Nullspace)
-                return new Box2();
-
-            var worldRotation = Owner.Transform.WorldRotation;
-            var bounds = new Box2();
-
-            foreach (var fixture in Fixtures)
-            {
-                var aabb = fixture.Shape.CalculateLocalBounds(worldRotation);
-                bounds = bounds.Union(aabb);
-            }
-
-            return bounds.Translated(Owner.Transform.WorldPosition);
         }
 
         /// <summary>
@@ -1190,26 +1201,28 @@ namespace Robust.Shared.GameObjects
 
         public void ResetMassData()
         {
-            // _mass = 0.0f;
-            // _invMass = 0.0f;
+            _mass = 0.0f;
+            _invMass = 0.0f;
             _inertia = 0.0f;
             InvI = 0.0f;
             // Sweep
 
-            if ((BodyType & (BodyType.Kinematic | BodyType.KinematicController)) != 0)
+            if (((int) _bodyType & (int) BodyType.Kinematic) != 0)
             {
                 return;
             }
 
-            DebugTools.Assert(BodyType == BodyType.Dynamic || BodyType == BodyType.Static);
-
             var localCenter = Vector2.Zero;
 
-            foreach (var fixture in Fixtures)
+            foreach (var fixture in _fixtures)
             {
-                // TODO: Density
-                continue;
-                // if (fixture.Shape.Density == 0.0f)
+                if (fixture.Mass <= 0.0f) continue;
+
+                var fixMass = fixture.Mass;
+
+                _mass += fixMass;
+                localCenter += fixture.Centroid * fixMass;
+                _inertia += fixture.Inertia;
             }
 
             if (BodyType == BodyType.Static)
@@ -1276,6 +1289,12 @@ namespace Robust.Shared.GameObjects
                 return false;
             }
 
+            var preventCollideMessage = new PreventCollideEvent(this, other);
+            Owner.EntityManager.EventBus.RaiseLocalEvent(Owner.Uid, preventCollideMessage);
+
+            if (preventCollideMessage.Cancelled) return false;
+
+#pragma warning disable 618
             foreach (var comp in Owner.GetAllComponents<ICollideSpecial>())
             {
                 if (comp.PreventCollide(other)) return false;
@@ -1285,18 +1304,31 @@ namespace Robust.Shared.GameObjects
             {
                 if (comp.PreventCollide(this)) return false;
             }
+#pragma warning restore 618
 
             return true;
         }
     }
 
-    public class AnchoredChangedMessage : ComponentMessage
+    /// <summary>
+    ///     Directed event raised when an entity's physics BodyType changes.
+    /// </summary>
+    public class PhysicsBodyTypeChangedEvent : EntityEventArgs
     {
-        public readonly bool Anchored;
+        /// <summary>
+        ///     New BodyType of the entity.
+        /// </summary>
+        public BodyType New { get; }
 
-        public AnchoredChangedMessage(bool anchored)
+        /// <summary>
+        ///     Old BodyType of the entity.
+        /// </summary>
+        public BodyType Old { get; }
+
+        public PhysicsBodyTypeChangedEvent(BodyType newType, BodyType oldType)
         {
-            Anchored = anchored;
+            New = newType;
+            Old = oldType;
         }
     }
 }

@@ -42,6 +42,12 @@ namespace Robust.Server.Console.Commands
             else
                 mapId = transform.MapID;
 
+            if (!mapMgr.MapExists(mapId))
+            {
+                shell.WriteError($"Map {mapId} doesn't exist!");
+                return;
+            }
+
             if (mapMgr.TryFindGridAt(mapId, position, out var grid))
             {
                 var gridPos = grid.WorldToLocal(position);
@@ -51,9 +57,8 @@ namespace Robust.Server.Console.Commands
             else
             {
                 var mapEnt = mapMgr.GetMapEntity(mapId);
-
-                transform.AttachParent(mapEnt);
                 transform.WorldPosition = position;
+                transform.AttachParent(mapEnt);
             }
 
             shell.WriteLine($"Teleported {player} to {mapId}:{posX},{posY}.");

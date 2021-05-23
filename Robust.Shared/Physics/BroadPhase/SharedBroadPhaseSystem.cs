@@ -218,13 +218,7 @@ namespace Robust.Shared.Physics.Broadphase
         public override void Shutdown()
         {
             base.Shutdown();
-            UnsubscribeLocalEvent<CollisionChangeMessage>();
-            UnsubscribeLocalEvent<MoveEvent>();
-            UnsubscribeLocalEvent<RotateEvent>();
-            UnsubscribeLocalEvent<EntMapIdChangedMessage>();
-            UnsubscribeLocalEvent<EntInsertedIntoContainerMessage>();
-            UnsubscribeLocalEvent<EntRemovedFromContainerMessage>();
-            UnsubscribeLocalEvent<FixtureUpdateMessage>();
+
             _mapManager.OnGridCreated -= HandleGridCreated;
             _mapManager.OnGridRemoved -= HandleGridRemoval;
             _mapManager.MapCreated -= HandleMapCreated;
@@ -346,10 +340,8 @@ namespace Robust.Shared.Physics.Broadphase
             }
         }
 
-        private void HandleGridCreated(GridId gridId)
+        private void HandleGridCreated(MapId mapId, GridId gridId)
         {
-            var mapId = _mapManager.GetGrid(gridId).ParentMapId;
-
             if (!_graph.TryGetValue(mapId, out var grids))
             {
                 grids = new Dictionary<GridId, IBroadPhase>();
@@ -371,7 +363,7 @@ namespace Robust.Shared.Physics.Broadphase
 
         }
 
-        private void HandleGridRemoval(GridId gridId)
+        private void HandleGridRemoval(MapId mapId, GridId gridId)
         {
             foreach (var (_, grids) in _graph)
             {
@@ -700,7 +692,7 @@ namespace Robust.Shared.Physics.Broadphase
                 AddBody(body);
             }
 
-            var modifiers = body.Entity.GetAllComponents<ICollideSpecial>();
+            var modifiers = body.Owner.GetAllComponents<ICollideSpecial>();
             var entities = new List<PhysicsComponent>();
 
             var state = (body, modifiers, entities);
@@ -720,7 +712,12 @@ namespace Robust.Shared.Physics.Broadphase
 
                                 var preventCollision = false;
                                 var otherModifiers = other.Fixture.Body.Owner.GetAllComponents<ICollideSpecial>();
+                                var preventCollideMessage = new PreventCollideEvent(body, other.Fixture.Body);
+                                EntityManager.EventBus.RaiseLocalEvent(body.Owner.Uid, preventCollideMessage);
 
+                                if (preventCollideMessage.Cancelled) return true;
+
+#pragma warning disable 618
                                 foreach (var modifier in state.modifiers)
                                 {
                                     preventCollision |= modifier.PreventCollide(other.Fixture.Body);
@@ -729,6 +726,7 @@ namespace Robust.Shared.Physics.Broadphase
                                 {
                                     preventCollision |= modifier.PreventCollide(body);
                                 }
+#pragma warning restore 618
 
                                 if (preventCollision)
                                     return true;
@@ -841,7 +839,7 @@ namespace Robust.Shared.Physics.Broadphase
                         return true;
                     }
 
-                    if (predicate?.Invoke(proxy.Fixture.Body.Entity) == true)
+                    if (predicate?.Invoke(proxy.Fixture.Body.Owner) == true)
                     {
                         return true;
                     }
@@ -849,7 +847,7 @@ namespace Robust.Shared.Physics.Broadphase
                     // TODO: Shape raycast here
 
                     // Need to convert it back to world-space.
-                    var result = new RayCastResults(distFromOrigin, point + offset, proxy.Fixture.Body.Entity);
+                    var result = new RayCastResults(distFromOrigin, point + offset, proxy.Fixture.Body.Owner);
                     results.Add(result);
                     EntityManager.EventBus.QueueEvent(EventSource.Local,
                         new DebugDrawRayMessage(
@@ -907,7 +905,7 @@ namespace Robust.Shared.Physics.Broadphase
 
                 broadPhase.QueryRay((in FixtureProxy proxy, in Vector2 point, float distFromOrigin) =>
                 {
-                    if (distFromOrigin > maxLength || proxy.Fixture.Body.Entity == ignoredEnt) return true;
+                    if (distFromOrigin > maxLength || proxy.Fixture.Body.Owner == ignoredEnt) return true;
 
                     if ((proxy.Fixture.CollisionLayer & ray.CollisionMask) == 0x0)
                     {

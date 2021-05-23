@@ -219,6 +219,7 @@ namespace Robust.Server.GameObjects
         public override void Shutdown()
         {
             base.Shutdown();
+
             _mapManager.OnGridCreated -= HandleGridCreated;
             _mapManager.OnGridRemoved -= HandleGridRemoval;
             _mapManager.TileChanged -= HandleTileChanged;
@@ -239,12 +240,12 @@ namespace Robust.Server.GameObjects
             GetOrCreateNode(eventArgs.NewTile.GridIndex, eventArgs.NewTile.GridIndices);
         }
 
-        private void HandleGridCreated(GridId gridId)
+        private void HandleGridCreated(MapId mapId, GridId gridId)
         {
             _graph[gridId] = new Dictionary<Vector2i, GridTileLookupChunk>();
         }
 
-        private void HandleGridRemoval(GridId gridId)
+        private void HandleGridRemoval(MapId mapId, GridId gridId)
         {
             var toRemove = new List<IEntity>();
 
@@ -317,7 +318,12 @@ namespace Robust.Server.GameObjects
         /// <param name="moveEvent"></param>
         private void HandleEntityMove(MoveEvent moveEvent)
         {
-            if (moveEvent.Sender.Deleted || moveEvent.NewPosition.GetGridId(EntityManager) == GridId.Invalid || !moveEvent.NewPosition.IsValid(EntityManager))
+            // TODO: When Acruid does TileEntities we may actually be able to delete this system if tile lookups become fast enough
+            var gridId = moveEvent.NewPosition.GetGridId(EntityManager);
+
+            if (moveEvent.Sender.Deleted ||
+                gridId == GridId.Invalid ||
+                !moveEvent.NewPosition.IsValid(EntityManager))
             {
                 HandleEntityRemove(moveEvent.Sender);
                 return;
@@ -329,7 +335,7 @@ namespace Robust.Server.GameObjects
             }
 
             // Memory leak protection
-            var gridBounds = _mapManager.GetGrid(moveEvent.Sender.Transform.GridID).WorldBounds;
+            var gridBounds = _mapManager.GetGrid(gridId).WorldBounds;
             if (!gridBounds.Contains(moveEvent.Sender.Transform.WorldPosition))
             {
                 HandleEntityRemove(moveEvent.Sender);
