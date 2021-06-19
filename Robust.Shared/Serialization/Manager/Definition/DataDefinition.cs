@@ -117,7 +117,7 @@ namespace Robust.Shared.Serialization.Manager.Definition
             {
                 if (key is not ValueDataNode valueDataNode)
                 {
-                    validatedMapping.Add(new ErrorNode(key, "Key not ValueDataNode."), new InconclusiveNode(val));
+                    validatedMapping.Add(new ErrorNode(key, $"Key not {nameof(ValueDataNode)}."), new InconclusiveNode(val));
                     continue;
                 }
 
@@ -134,12 +134,23 @@ namespace Robust.Shared.Serialization.Manager.Definition
                 }
 
                 var keyValidated = serialization.ValidateNode(typeof(string), key, context);
-                ValidationNode valValidated = field.Attribute.CustomTypeSerializer != null
-                    ? serialization.ValidateNodeWith(field.FieldType,
-                        field.Attribute.CustomTypeSerializer, val, context)
+                var valValidated = field.Attribute.CustomTypeSerializer != null
+                    ? serialization.ValidateNodeWith(field.FieldType, field.Attribute.CustomTypeSerializer, val, context)
                     : serialization.ValidateNode(field.FieldType, val, context);
 
                 validatedMapping.Add(keyValidated, valValidated);
+            }
+
+            foreach (var field in BaseFieldDefinitions)
+            {
+                if (field.Attribute.Required && !mapping.Has(field.Attribute.Tag))
+                {
+                    var error = new ErrorNode(
+                        mapping,
+                        $"Field \"{field.Attribute.Tag}\" not found in mapping node.");
+
+                    validatedMapping.Add(error, new InconclusiveNode(mapping));
+                }
             }
 
             return new ValidatedMappingNode(validatedMapping);
