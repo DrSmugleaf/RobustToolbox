@@ -269,7 +269,7 @@ namespace Robust.Client.GameStates
                 // Update the cached server state.
                 using (_prof.Group("FullRep"))
                 {
-                    _processor.UpdateFullRep(curState);
+                    _processor.UpdateFullRep(curState, _entities);
                 }
 
                 IEnumerable<EntityUid> createdEntities;
@@ -368,7 +368,7 @@ namespace Robust.Client.GameStates
 
         public void RequestFullState(EntityUid? missingEntity = null)
         {
-            Logger.Info("Requesting full server state");
+            _sawmill.Info("Requesting full server state");
             _network.ClientSendMessage(new MsgStateRequestFull() { Tick = _timing.LastRealTick , MissingEntity = missingEntity ?? EntityUid.Invalid });
             _processor.RequestFullState();
         }
@@ -448,11 +448,12 @@ namespace Robust.Client.GameStates
             var countReset = 0;
             var system = _entitySystemManager.GetEntitySystem<ClientDirtySystem>();
             var query = _entityManager.GetEntityQuery<MetaDataComponent>();
+            RemQueue<Component> toRemove = new();
 
             // This is terrible, and I hate it.
             _entitySystemManager.GetEntitySystem<SharedGridTraversalSystem>().QueuedEvents.Clear();
 
-            foreach (var entity in system.GetDirtyEntities())
+            foreach (var entity in system.DirtyEntities)
             {
                 // Check log level first to avoid the string alloc.
                 if (_sawmill.Level <= LogLevel.Debug)
@@ -466,10 +467,29 @@ namespace Robust.Client.GameStates
 
                 countReset += 1;
 
-                // TODO: handle component deletions/creations.
                 foreach (var (netId, comp) in _entityManager.GetNetComponents(entity))
                 {
                     DebugTools.AssertNotNull(netId);
+                    if (!comp.NetSyncEnabled)
+                        continue;
+
+                    // Was this component added during prediction?
+                    if (comp.CreationTick > _timing.LastRealTick)
+                    {
+                        if (last.ContainsKey(netId))
+                        {
+                            // Component was probably removed and then re-addedd during a single prediction run
+                            // Just reset state as normal.
+                            comp.ClearCreationTick();
+                        }
+                        else
+                        {
+                            toRemove.Add(comp);
+                            if (_sawmill.Level <= LogLevel.Debug)
+                                _sawmill.Debug($"  A new component was added: {comp.GetType()}");
+                            continue;
+                        }
+                    }
 
                     if (comp.LastModifiedTick <= _timing.LastRealTick || !last.TryGetValue(netId, out var compState))
                     {
@@ -477,14 +497,44 @@ namespace Robust.Client.GameStates
                     }
 
                     if (_sawmill.Level <= LogLevel.Debug)
-                        _sawmill.Debug($"  And also its component {comp.GetType()}");
+                        _sawmill.Debug($"  A component was dirtied: {comp.GetType()}");
 
-                    // TODO: Handle interpolation.
                     var handleState = new ComponentHandleState(compState, null);
                     _entities.EventBus.RaiseComponentEvent(comp, ref handleState);
                     comp.HandleComponentState(compState, null);
                     comp.LastModifiedTick = _timing.LastRealTick;
                 }
+
+                // Remove predicted component additions
+                foreach (var comp in toRemove)
+                {
+                    _entities.RemoveComponent(comp.Owner, comp);
+                }
+
+                // Re-add predicted removals
+                if (system.RemovedComponents.TryGetValue(entity, out var netIds))
+                {
+                    foreach (var netId in netIds)
+                    {
+                        if (_entities.HasComponent(entity, netId))
+                            continue;
+
+                        if (!last.TryGetValue(netId, out var state))
+                            continue;
+
+                        var comp = _entityManager.AddComponent(entity, netId);
+
+                        if (_sawmill.Level <= LogLevel.Debug)
+                            _sawmill.Debug($"  A component was removed: {comp.GetType()}");
+
+                        var stateEv = new ComponentHandleState(state, null);
+                        _entities.EventBus.RaiseComponentEvent(comp, ref stateEv);
+                        comp.HandleComponentState(state, null);
+                        comp.ClearCreationTick(); // don't undo the re-adding.
+                        comp.LastModifiedTick = _timing.LastRealTick;
+                    }
+                }
+
                 var meta = query.GetComponent(entity);
                 DebugTools.Assert(meta.LastModifiedTick > _timing.LastRealTick || meta.LastModifiedTick == GameTick.Zero);
                 meta.EntityLastModifiedTick = _timing.LastRealTick;
@@ -517,7 +567,7 @@ namespace Robust.Client.GameStates
                 foreach (var (netId, component) in _entityManager.GetNetComponents(createdEntity))
                 {
                     if (component.NetSyncEnabled)
-                        compData.Add(netId, _entityManager.GetComponentState(bus, component));
+                        compData.Add(netId, _entityManager.GetComponentState(bus, component, _players.LocalPlayer?.Session));
                 }
             }
 
@@ -787,7 +837,8 @@ namespace Robust.Client.GameStates
                     }
                     catch (Exception e)
                     {
-                        Logger.ErrorS("state", $"Server entity threw in Init: ent={_entityManager.ToPrettyString(entity)}\n{e}");
+                        _sawmill.Error($"Server entity threw in Init: ent={_entityManager.ToPrettyString(entity)}");
+                        _runtimeLog.LogException(e, $"{nameof(ClientGameStateManager)}.{nameof(InitializeAndStart)}");
                         brokenEnts.Add(entity);
                         toCreate.Remove(entity);
                     }
@@ -808,7 +859,8 @@ namespace Robust.Client.GameStates
                     }
                     catch (Exception e)
                     {
-                        Logger.ErrorS("state", $"Server entity threw in Start: ent={_entityManager.ToPrettyString(entity)}\n{e}");
+                        _sawmill.Error($"Server entity threw in Start: ent={_entityManager.ToPrettyString(entity)}");
+                        _runtimeLog.LogException(e, $"{nameof(ClientGameStateManager)}.{nameof(InitializeAndStart)}");
                         brokenEnts.Add(entity);
                         toCreate.Remove(entity);
                     }
@@ -829,6 +881,22 @@ namespace Robust.Client.GameStates
         {
             var size = curState?.ComponentChanges.Span.Length ?? 0 + nextState?.ComponentChanges.Span.Length ?? 0;
             var compStateWork = new Dictionary<ushort, (IComponent Component, ComponentState? curState, ComponentState? nextState)>(size);
+
+            // First remove any deleted components
+            if (curState?.NetComponents != null)
+            {
+                RemQueue<Component> toRemove = new();
+                foreach (var (id, comp) in _entities.GetNetComponents(uid))
+                {
+                    if (comp.NetSyncEnabled && !curState.NetComponents.Contains(id))
+                        toRemove.Add(comp);
+                }
+
+                foreach (var comp in toRemove)
+                {
+                    _entities.RemoveComponent(uid, comp);
+                }
+            }
 
             if (enteringPvs)
             {
@@ -854,12 +922,6 @@ namespace Robust.Client.GameStates
             {
                 foreach (var compChange in curState.ComponentChanges.Span)
                 {
-                    if (compChange.Deleted)
-                    {
-                        _entityManager.RemoveComponent(uid, compChange.NetID);
-                        continue;
-                    }
-
                     if (!_entityManager.TryGetComponent(uid, compChange.NetID, out var comp))
                     {
                         comp = _compFactory.GetComponent(compChange.NetID);
@@ -906,10 +968,10 @@ namespace Robust.Client.GameStates
                 catch (Exception e)
                 {
 #if EXCEPTION_TOLERANCE
-                _runtimeLog.LogException(new ComponentStateApplyException(
-                        $"Failed to apply comp state: entity={comp.Owner}, comp={comp.GetType()}", e), "Component state apply");
+                        _sawmill.Error($"Failed to apply comp state: entity={comp.Owner}, comp={comp.GetType()}");
+                        _runtimeLog.LogException(e, $"{nameof(ClientGameStateManager)}.{nameof(HandleEntityState)}");
 #else
-                    Logger.Error($"Failed to apply comp state: entity={comp.Owner}, comp={comp.GetType()}");
+                    _sawmill.Error($"Failed to apply comp state: entity={comp.Owner}, comp={comp.GetType()}");
                     throw;
 #endif
                 }
@@ -1045,10 +1107,10 @@ namespace Robust.Client.GameStates
 
             var uid = meta.Owner;
 
-            if (!_processor.TryGetLastServerStates(uid, out var data))
+            if (!_processor.TryGetLastServerStates(uid, out var lastState))
                 return;
 
-            foreach (var (id, state) in data)
+            foreach (var (id, state) in lastState)
             {
                 if (!_entityManager.TryGetComponent(uid, id, out var comp))
                 {
@@ -1061,6 +1123,19 @@ namespace Robust.Client.GameStates
                 var handleState = new ComponentHandleState(state, null);
                 _entityManager.EventBus.RaiseComponentEvent(comp, ref handleState);
                 comp.HandleComponentState(state, null);
+            }
+
+            // ensure we don't have any extra components
+            RemQueue<Component> toRemove = new();
+            foreach (var (id, comp) in _entities.GetNetComponents(uid))
+            {
+                if (comp.NetSyncEnabled && !lastState.ContainsKey(id))
+                    toRemove.Add(comp);
+            }
+
+            foreach (var comp in toRemove)
+            {
+                _entities.RemoveComponent(uid, comp);
             }
         }
         #endregion

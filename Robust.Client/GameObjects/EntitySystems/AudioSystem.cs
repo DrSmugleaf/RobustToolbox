@@ -11,6 +11,7 @@ using Robust.Shared.IoC;
 using Robust.Shared.Log;
 using Robust.Shared.Map;
 using Robust.Shared.Physics;
+using Robust.Shared.Physics.Systems;
 using Robust.Shared.Player;
 using Robust.Shared.Random;
 using Robust.Shared.Timing;
@@ -503,7 +504,7 @@ namespace Robust.Client.GameObjects
             source.IsLooping = audioParams.Value.Loop;
         }
 
-        private sealed class PlayingStream : IPlayingAudioStream
+        public sealed class PlayingStream : IPlayingAudioStream
         {
             public uint? NetIdentifier;
             public IClydeAudioSource Source = default!;

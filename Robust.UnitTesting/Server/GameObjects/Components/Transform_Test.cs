@@ -10,7 +10,6 @@ using Robust.Shared.IoC;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using Robust.Shared.Physics;
-using Robust.Shared.Physics.Broadphase;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization.Manager;
 using Robust.Shared.Timing;
@@ -104,7 +103,7 @@ namespace Robust.UnitTesting.Server.GameObjects.Components
             Assert.Multiple(() =>
             {
                 Assert.That(childTrans.MapID, Is.EqualTo(parentTrans.MapID));
-                Assert.That(childTrans.GridID, Is.EqualTo(parentTrans.GridID));
+                Assert.That(childTrans.GridUid, Is.EqualTo(parentTrans.GridUid));
                 Assert.That(childTrans.Coordinates, Is.EqualTo(new EntityCoordinates(parentTrans.Owner, (-1, -1))));
                 Assert.That(childTrans.WorldPosition, Is.EqualTo(new Vector2(4, 4)));
             });

@@ -17,6 +17,7 @@ using Robust.Shared.Map;
 using Robust.Shared.Maths;
 using Robust.Shared.Network;
 using Robust.Shared.Network.Messages;
+using Robust.Shared.Physics.Components;
 using Robust.Shared.Players;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
@@ -226,7 +227,7 @@ internal sealed partial class PVSSystem : EntitySystem
             // we just discard it.
             _visSetPool.Return(overflowEnts);
         }
-        
+
         if (sessionData.SentEntities.TryGetValue(ackedTick, out var ackedData))
             ProcessAckedTick(sessionData, ackedData, ackedTick, lastAckedTick);
     }
@@ -363,10 +364,13 @@ internal sealed partial class PVSSystem : EntitySystem
     {
         if (e.NewStatus == SessionStatus.InGame)
         {
-            _playerVisibleSets.Add(e.Session, new());
+            if (!_playerVisibleSets.TryAdd(e.Session, new()))
+                _sawmill.Error($"Attempted to add player to _playerVisibleSets, but they were already present? Session:{e.Session}");
+
             foreach (var pvsCollection in _pvsCollections)
             {
-                pvsCollection.AddPlayer(e.Session);
+                if (!pvsCollection.AddPlayer(e.Session))
+                    _sawmill.Error($"Attempted to add player to pvsCollection, but they were already present? Session:{e.Session}");
             }
             return;
         }
@@ -376,7 +380,8 @@ internal sealed partial class PVSSystem : EntitySystem
 
         foreach (var pvsCollection in _pvsCollections)
         {
-            pvsCollection.RemovePlayer(e.Session);
+            if (!pvsCollection.RemovePlayer(e.Session))
+                _sawmill.Error($"Attempted to remove player from pvsCollection, but they were already removed? Session:{e.Session}");
         }
 
         if (!_playerVisibleSets.Remove(e.Session, out var data))
@@ -402,20 +407,19 @@ internal sealed partial class PVSSystem : EntitySystem
     {
         foreach (var pvsCollection in _pvsCollections)
         {
-            pvsCollection.RemoveGrid(ev.GridId);
+            pvsCollection.RemoveGrid(ev.EntityUid);
         }
     }
 
     private void OnGridCreated(GridInitializeEvent ev)
     {
-        var gridId = ev.GridId;
+        var gridId = ev.EntityUid;
         foreach (var pvsCollection in _pvsCollections)
         {
             pvsCollection.AddGrid(gridId);
         }
 
-        var euid = _mapManager.GetGridEuid(gridId);
-        _entityPvsCollection.UpdateIndex(euid);
+        _entityPvsCollection.UpdateIndex(gridId);
     }
 
     private void OnMapDestroyed(MapChangedEvent e)
@@ -529,7 +533,7 @@ internal sealed partial class PVSSystem : EntitySystem
 
                     while (gridChunkEnumerator.MoveNext(out var gridChunkIndices))
                     {
-                        var chunkLocation = new GridChunkLocation(mapGrid.Index, gridChunkIndices.Value);
+                        var chunkLocation = new GridChunkLocation(mapGrid.GridEntityId, gridChunkIndices.Value);
                         var entry = (visMask, chunkLocation);
 
                         if (gridDict.TryGetValue(chunkLocation, out var indexOf))
@@ -691,7 +695,7 @@ internal sealed partial class PVSSystem : EntitySystem
 
         if (visibleEnts.Count != 0)
             throw new Exception("Encountered non-empty object inside of _visSetPool. Was the same object returned to the pool more than once?");
-        
+
         var deletions = _entityPvsCollection.GetDeletedIndices(fromTick);
 
         foreach (var i in chunkIndices)
@@ -754,7 +758,7 @@ internal sealed partial class PVSSystem : EntitySystem
             var entFromTick = entered ? lastSeen.GetValueOrDefault(uid) : fromTick;
             var state = GetEntityState(session, uid, entFromTick, mQuery.GetComponent(uid));
 
-            if (entered || !state.Empty) 
+            if (entered || !state.Empty)
                 entityStates.Add(state);
         }
 
@@ -808,7 +812,7 @@ internal sealed partial class PVSSystem : EntitySystem
         foreach (var uid in lastSent.Keys)
         {
             if (!visibleEnts.ContainsKey(uid))
-                leftView.Add(uid); 
+                leftView.Add(uid);
         }
 
         return leftView.Count > 0 ? leftView : null;
@@ -901,7 +905,7 @@ internal sealed partial class PVSSystem : EntitySystem
         // the budget. Chances are the packet will arrive in a nice and orderly fashion, and the client will stick to
         // their requested budget. However this can cause issues if a packet gets dropped, because a player may create
         // 2x or more times the normal entity creation budget.
-        // 
+        //
         // The fix for that would be to just also give the PVS budget a client-side aspect that controls entity creation
         // rate.
         if (enteredSinceLastSent)
@@ -1050,8 +1054,8 @@ internal sealed partial class PVSSystem : EntitySystem
         var bus = EntityManager.EventBus;
         var changed = new List<ComponentChange>();
 
-        // Whether this entity has any component states that should only be sent to specific sessions.
-        var entitySpecific = (meta.Flags & MetaDataFlags.EntitySpecific) == MetaDataFlags.EntitySpecific;
+        bool sendCompList = meta.LastComponentRemoved > fromTick;
+        HashSet<ushort>? netComps = sendCompList ? new() : null;
 
         foreach (var (netId, component) in EntityManager.GetNetComponents(entityUid))
         {
@@ -1064,37 +1068,29 @@ internal sealed partial class PVSSystem : EntitySystem
                 continue;
             }
 
-            // NOTE: When LastModifiedTick or CreationTick are 0 it means that the relevant data is
-            // "not different from entity creation".
-            // i.e. when the client spawns the entity and loads the entity prototype,
-            // the data it deserializes from the prototype SHOULD be equal
-            // to what the component state / ComponentChange would send.
-            // As such, we can avoid sending this data in this case since the client "already has it".
-
-            DebugTools.Assert(component.LastModifiedTick >= component.CreationTick);
-
-            var addState = component.CreationTick != GameTick.Zero && component.CreationTick > fromTick;
-            var changedState = component.LastModifiedTick != GameTick.Zero && component.LastModifiedTick > fromTick;
-
-            if (!(addState || changedState))
-                continue;
-
             if (component.SendOnlyToOwner && player.AttachedEntity != component.Owner)
                 continue;
 
-            if (entitySpecific && !EntityManager.CanGetComponentState(bus, component, player))
+            if (component.LastModifiedTick <= fromTick)
+            {
+                if (sendCompList && (!component.SessionSpecific || EntityManager.CanGetComponentState(bus, component, player)))
+                    netComps!.Add(netId);
+                continue;
+            }
+
+            if (component.SessionSpecific && !EntityManager.CanGetComponentState(bus, component, player))
                 continue;
 
-            var state = changedState ? EntityManager.GetComponentState(bus, component) : null;
-            changed.Add(ComponentChange.Added(netId, state, component.LastModifiedTick));
+            var state = EntityManager.GetComponentState(bus, component, component.SessionSpecific ? player : null);
+            changed.Add(new ComponentChange(netId, state, component.LastModifiedTick));
+
+            if (sendCompList)
+                netComps!.Add(netId);
         }
 
-        foreach (var netId in _serverEntManager.GetDeletedComponents(entityUid, fromTick))
-        {
-            changed.Add(ComponentChange.Removed(netId));
-        }
+        var entState = new EntityState(entityUid, changed, meta.EntityLastModifiedTick, netComps);
 
-        return new EntityState(entityUid, changed.ToArray(), meta.EntityLastModifiedTick);
+        return entState;
     }
 
     /// <summary>
@@ -1104,7 +1100,8 @@ internal sealed partial class PVSSystem : EntitySystem
     {
         var bus = EntityManager.EventBus;
         var changed = new List<ComponentChange>();
-        var entitySpecific = (meta.Flags & MetaDataFlags.EntitySpecific) == MetaDataFlags.EntitySpecific;
+
+        HashSet<ushort> netComps = new();
 
         foreach (var (netId, component) in EntityManager.GetNetComponents(entityUid))
         {
@@ -1114,18 +1111,16 @@ internal sealed partial class PVSSystem : EntitySystem
             if (component.SendOnlyToOwner && player.AttachedEntity != component.Owner)
                 continue;
 
-            if (entitySpecific && !EntityManager.CanGetComponentState(bus, component, player))
+            if (component.SessionSpecific && !EntityManager.CanGetComponentState(bus, component, player))
                 continue;
 
-            changed.Add(ComponentChange.Added(netId, EntityManager.GetComponentState(bus, component), component.LastModifiedTick));
+            changed.Add(new ComponentChange(netId, EntityManager.GetComponentState(bus, component, component.SessionSpecific ? player : null), component.LastModifiedTick));
+            netComps.Add(netId);
         }
 
-        foreach (var netId in _serverEntManager.GetDeletedComponents(entityUid, GameTick.Zero))
-        {
-            changed.Add(ComponentChange.Removed(netId));
-        }
+        var entState = new EntityState(entityUid, changed, meta.EntityLastModifiedTick, netComps);
 
-        return new EntityState(entityUid, changed.ToArray(), meta.EntityLastModifiedTick);
+        return entState;
     }
 
     private EntityUid[] GetSessionViewers(ICommonSession session)
@@ -1167,34 +1162,6 @@ internal sealed partial class PVSSystem : EntitySystem
     {
         var xform = transformQuery.GetComponent(euid);
         return (xform.WorldPosition, _viewSize / 2f, xform.MapID);
-    }
-
-    public sealed class SetPolicy<T> : PooledObjectPolicy<HashSet<T>>
-    {
-        public override HashSet<T> Create()
-        {
-            return new HashSet<T>();
-        }
-
-        public override bool Return(HashSet<T> obj)
-        {
-            obj.Clear();
-            return true;
-        }
-    }
-
-    public sealed class DictPolicy<T1, T2> : PooledObjectPolicy<Dictionary<T1, T2>> where T1 : notnull
-    {
-        public override Dictionary<T1, T2> Create()
-        {
-            return new Dictionary<T1, T2>();
-        }
-
-        public override bool Return(Dictionary<T1, T2> obj)
-        {
-            obj.Clear();
-            return true;
-        }
     }
 
     public sealed class TreePolicy<T> : PooledObjectPolicy<RobustTree<T>> where T : notnull
