@@ -183,25 +183,19 @@ namespace Robust.Shared.Serialization.Manager.Definition
 
             foreach (var (key, val) in mapping.Children)
             {
-                if (key is not ValueDataNode valueDataNode)
-                {
-                    validatedMapping.Add(new ErrorNode(key, "Key not ValueDataNode."), new InconclusiveNode(val));
-                    continue;
-                }
-
-                var field = BaseFieldDefinitions.FirstOrDefault(f => f.Attribute is DataFieldAttribute dataFieldAttribute && dataFieldAttribute.Tag == valueDataNode.Value);
+                var field = BaseFieldDefinitions.FirstOrDefault(f => f.Attribute is DataFieldAttribute dataFieldAttribute && dataFieldAttribute.Tag == key);
                 if (field == null)
                 {
                     var error = new ErrorNode(
-                        key,
-                        $"Field \"{valueDataNode.Value}\" not found in \"{Type}\".",
+                        new ValueDataNode(key),
+                        $"Field \"{key}\" not found in \"{Type}\".",
                         false);
 
                     validatedMapping.Add(error, new InconclusiveNode(val));
                     continue;
                 }
 
-                var keyValidated = serialization.ValidateNode(typeof(string), key, context);
+                var keyValidated = serialization.ValidateNode(typeof(string), new ValueDataNode(key), context);
                 ValidationNode valValidated = field.Attribute.CustomTypeSerializer != null
                     ? serialization.ValidateNodeWith(field.FieldType,
                         field.Attribute.CustomTypeSerializer, val, context)

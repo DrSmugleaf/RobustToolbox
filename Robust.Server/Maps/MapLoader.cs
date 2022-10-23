@@ -594,7 +594,7 @@ namespace Robust.Server.Maps
 
                 foreach (var kvInfo in yamlGridInfo)
                 {
-                    var key = ((ValueDataNode)kvInfo.Key).Value;
+                    var key = kvInfo.Key;
                     var val = ((ValueDataNode)kvInfo.Value).Value;
                     if (key == "chunksize")
                         csz = ushort.Parse(val);
@@ -677,7 +677,7 @@ namespace Robust.Server.Maps
                 var tileMap = RootNode.Get<MappingDataNode>("tilemap");
                 foreach (var (key, value) in tileMap.Children)
                 {
-                    var tileId = (ushort) ((ValueDataNode)key).AsInt();
+                    var tileId = ushort.Parse(key, CultureInfo.InvariantCulture);
                     var tileDefName = ((ValueDataNode)value).Value;
                     _tileMap.Add(tileId, tileDefName);
                 }

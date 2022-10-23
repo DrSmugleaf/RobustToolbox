@@ -3,41 +3,34 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Threading;
 using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Utility;
 using YamlDotNet.RepresentationModel;
 
 namespace Robust.Shared.Serialization.Markdown.Mapping
 {
-    public sealed class MappingDataNode : DataNode<MappingDataNode>, IDictionary<DataNode, DataNode>
+    public sealed class MappingDataNode : DataNode<MappingDataNode>, IDictionary<string, DataNode>
     {
-        // To fetch nodes by key name with YAML, we NEED a YamlScalarNode.
-        // We use a thread local one to avoid allocating one every fetch, since we just replace the inner value.
-        // Obviously thread local to avoid threading issues.
-        private static readonly ThreadLocal<ValueDataNode> FetchNode =
-            new(() => new ValueDataNode(""));
+        private readonly Dictionary<string, DataNode> _children;
 
-        private readonly Dictionary<DataNode, DataNode> _children;
-
-        public IReadOnlyDictionary<DataNode, DataNode> Children => _children;
+        public IReadOnlyDictionary<string, DataNode> Children => _children;
 
         public MappingDataNode() : base(NodeMark.Invalid, NodeMark.Invalid)
         {
-            _children = new();
+            _children = new Dictionary<string, DataNode>();
         }
 
         public MappingDataNode(int size) : base(NodeMark.Invalid, NodeMark.Invalid)
         {
-            _children = new(size);
+            _children = new Dictionary<string, DataNode>(size);
         }
 
         public MappingDataNode(YamlMappingNode mapping) : base(mapping.Start, mapping.End)
         {
-            _children = new(mapping.Children.Count);
+            _children = new Dictionary<string, DataNode>(mapping.Children.Count);
             foreach (var (key, val) in mapping.Children)
             {
-                _children.Add(key.ToDataNode(), val.ToDataNode());
+                _children.Add(((YamlScalarNode) key).Value!, val.ToDataNode());
             }
 
             Tag = mapping.Tag.IsEmpty ? null : mapping.Tag.Value;
@@ -45,70 +38,55 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
 
         public MappingDataNode(Dictionary<DataNode, DataNode> nodes) : base(NodeMark.Invalid, NodeMark.Invalid)
         {
-            _children = new(nodes.Count);
+            _children = new Dictionary<string, DataNode>(nodes.Count);
             foreach (var (key, val) in nodes)
             {
-                _children.Add(key, val);
+                _children.Add(((ValueDataNode) key).Value, val);
             }
         }
 
-        public KeyValuePair<DataNode, DataNode> this[int key] => Children.ElementAt(key);
+        public KeyValuePair<string, DataNode> this[int key] => Children.ElementAt(key);
 
         public DataNode this[string index]
         {
-            get => Get(index);
-            set => Add(new ValueDataNode(index), value);
+            get => _children[index];
+            set => _children[index] = value;
         }
 
-        private static ValueDataNode GetFetchNode(string key)
-        {
-            var node = FetchNode.Value!;
-            node.Value = key;
-            return node;
-        }
-
-        public MappingDataNode Add(DataNode key, DataNode node)
+        public MappingDataNode Add(string key, DataNode node)
         {
             _children.Add(key, node);
             return this;
         }
 
-        public bool ContainsKey(DataNode key) => _children.ContainsKey(key);
-
-        bool IDictionary<DataNode, DataNode>.Remove(DataNode key) => _children.Remove(key);
-
-        public bool TryGetValue(DataNode key, [NotNullWhen(true)] out DataNode? value) => TryGet(key, out value);
-
-        public DataNode this[DataNode key]
+        void IDictionary<string, DataNode>.Add(string key, DataNode node)
         {
-            get => _children[key];
-            set => _children[key] = value;
+            _children.Add(key, node);
         }
 
-        public ICollection<DataNode> Keys => _children.Keys;
+        public bool ContainsKey(string key) => _children.ContainsKey(key);
+
+        bool IDictionary<string, DataNode>.Remove(string key) => _children.Remove(key);
+
+        public bool TryGetValue(string key, [NotNullWhen(true)] out DataNode? value)
+        {
+            return TryGet(key, out value);
+        }
+
+        public ICollection<string> Keys => _children.Keys;
         public ICollection<DataNode> Values => _children.Values;
 
-        public DataNode Get(DataNode key)
+        public DataNode Get(string key)
         {
             return _children[key];
         }
 
-        public T Get<T>(DataNode key) where T : DataNode
+        public T Get<T>(string key) where T : DataNode
         {
             return (T) Get(key);
         }
 
-        public DataNode Get(string key)
-        {
-            return Get(GetFetchNode(key));
-        }
-
-        public T Get<T>(string key) where T : DataNode
-        {
-            return Get<T>(GetFetchNode(key));
-        }
-
-        public bool TryGet(DataNode key, [NotNullWhen(true)] out DataNode? node)
+        public bool TryGet(string key, [NotNullWhen(true)] out DataNode? node)
         {
             if (_children.TryGetValue(key, out node))
             {
@@ -119,7 +97,7 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
             return false;
         }
 
-        public bool TryGet<T>(DataNode key, [NotNullWhen(true)] out T? node) where T : DataNode
+        public bool TryGet<T>(string key, [NotNullWhen(true)] out T? node) where T : DataNode
         {
             node = null;
             if (!TryGet(key, out var rawNode)) return false;
@@ -127,37 +105,15 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
             return true;
         }
 
-        public bool TryGet(string key, [NotNullWhen(true)] out DataNode? node)
-        {
-            return TryGet(GetFetchNode(key), out node);
-        }
-
-        public bool TryGet<T>(string key, [NotNullWhen(true)] out T? node) where T : DataNode
-        {
-            return TryGet(GetFetchNode(key), out node);
-        }
-
-        public bool Has(DataNode key)
+        public bool Has(string key)
         {
             return _children.ContainsKey(key);
         }
 
-        public bool Has(string key)
-        {
-            return Has(GetFetchNode(key));
-        }
-
-        void IDictionary<DataNode, DataNode>.Add(DataNode key, DataNode value) => _children.Add(key, value);
-
-        public MappingDataNode Remove(DataNode key)
+        public MappingDataNode Remove(string key)
         {
             _children.Remove(key);
             return this;
-        }
-
-        public MappingDataNode Remove(string key)
-        {
-            return Remove(GetFetchNode(key));
         }
 
         public T Cast<T>(string index) where T : DataNode
@@ -170,7 +126,7 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
             var mapping = new YamlMappingNode();
             foreach (var (key, val) in _children)
             {
-                mapping.Add(key.ToYamlNode(), val.ToYamlNode());
+                mapping.Add(new YamlScalarNode(key), val.ToYamlNode());
             }
 
             mapping.Tag = Tag;
@@ -198,7 +154,7 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
                 if (!skipDuplicates || !Has(key))
                 {
                     // Intentionally raises an ArgumentException
-                    Add(key.Copy(), val.Copy());
+                    Add(key, val.Copy());
                 }
             }
         }
@@ -216,7 +172,7 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
 
             foreach (var (key, val) in _children)
             {
-                newMapping.Add(key.Copy(), val.Copy());
+                newMapping.Add(key, val.Copy());
             }
 
             return newMapping;
@@ -239,14 +195,14 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
                 var other = node._children.FirstOrNull(p => p.Key.Equals(key));
                 if (other == null)
                 {
-                    mappingNode.Add(key.Copy(), val.Copy());
+                    mappingNode.Add(key, val.Copy());
                 }
                 else
                 {
                     // We recursively call except on the values and keep only the differences.
                     var newValue = val.Except(other.Value.Value);
                     if (newValue == null) continue;
-                    mappingNode.Add(key.Copy(), newValue);
+                    mappingNode.Add(key, newValue);
                 }
             }
 
@@ -268,13 +224,13 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
 
                 if (other == null)
                 {
-                    mappingNode.Add(key.Copy(), val.Copy());
+                    mappingNode.Add(key, val.Copy());
                 }
                 else
                 {
                     // We only keep the entry if the values are not equal
                     if (!val.Equals(other.Value.Value))
-                        mappingNode.Add(key.Copy(), val.Copy());
+                        mappingNode.Add(key, val.Copy());
                 }
             }
 
@@ -299,15 +255,16 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
             var newNode = Copy();
             foreach (var (key, val) in node)
             {
-                if(newNode.Has(key)) continue;
+                if (newNode.Has(key))
+                    continue;
 
-                newNode[key.Copy()] = val.Copy();
+                newNode[key] = val.Copy();
             }
 
             return newNode;
         }
 
-        public IEnumerator<KeyValuePair<DataNode, DataNode>> GetEnumerator() => _children.GetEnumerator();
+        public IEnumerator<KeyValuePair<string, DataNode>> GetEnumerator() => _children.GetEnumerator();
 
         public override int GetHashCode()
         {
@@ -326,18 +283,18 @@ namespace Robust.Shared.Serialization.Markdown.Mapping
             return GetEnumerator();
         }
 
-        public void Add(KeyValuePair<DataNode, DataNode> item) => _children.Add(item.Key, item.Value);
+        public void Add(KeyValuePair<string, DataNode> item) => _children.Add(item.Key, item.Value);
 
         public void Clear() => _children.Clear();
 
-        public bool Contains(KeyValuePair<DataNode, DataNode> item) =>
-            ((IDictionary<DataNode, DataNode>) _children).Contains(item);
+        public bool Contains(KeyValuePair<string, DataNode> item) =>
+            ((IDictionary<string, DataNode>) _children).Contains(item);
 
-        public void CopyTo(KeyValuePair<DataNode, DataNode>[] array, int arrayIndex) =>
-            ((IDictionary<DataNode, DataNode>) _children).CopyTo(array, arrayIndex);
+        public void CopyTo(KeyValuePair<string, DataNode>[] array, int arrayIndex) =>
+            ((IDictionary<string, DataNode>) _children).CopyTo(array, arrayIndex);
 
-        public bool Remove(KeyValuePair<DataNode, DataNode> item) =>
-            ((IDictionary<DataNode, DataNode>) _children).Remove(item);
+        public bool Remove(KeyValuePair<string, DataNode> item) =>
+            ((IDictionary<string, DataNode>) _children).Remove(item);
 
         public int Count => _children.Count;
         public bool IsReadOnly => false;

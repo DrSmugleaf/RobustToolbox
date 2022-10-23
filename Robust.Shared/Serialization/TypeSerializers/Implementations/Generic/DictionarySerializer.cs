@@ -9,6 +9,7 @@ using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Validation;
+using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Interfaces;
 
 namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
@@ -30,7 +31,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
             foreach (var (key, val) in value)
             {
                 mappingNode.Add(
-                    serializationManager.WriteValue(key, alwaysWrite, context),
+                    serializationManager.WriteValueAs<ValueDataNode>(key, alwaysWrite, context).Value,
                     serializationManager.WriteValue(typeof(TValue), val, alwaysWrite, context));
             }
 
@@ -45,7 +46,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
 
             foreach (var (key, value) in node.Children)
             {
-                dict.Add(serializationManager.Read<TKey>(key, context, skipHook),
+                dict.Add(serializationManager.Read<TKey>(new ValueDataNode(key), context, skipHook),
                     serializationManager.Read<TValue>(value, context, skipHook));
             }
 
@@ -78,7 +79,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
             var mapping = new Dictionary<ValidationNode, ValidationNode>();
             foreach (var (key, val) in node.Children)
             {
-                mapping.Add(serializationManager.ValidateNode(typeof(TKey), key, context), serializationManager.ValidateNode(typeof(TValue), val, context));
+                mapping.Add(serializationManager.ValidateNode(typeof(TKey), new ValueDataNode(key), context), serializationManager.ValidateNode(typeof(TValue), val, context));
             }
 
             return new ValidatedMappingNode(mapping);
@@ -121,7 +122,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
 
             foreach (var (key, value) in node.Children)
             {
-                dict.Add(serializationManager.Read<TKey>(key, context, skipHook), serializationManager.Read<TValue>(value, context, skipHook));
+                dict.Add(serializationManager.Read<TKey>(new ValueDataNode(key), context, skipHook), serializationManager.Read<TValue>(value, context, skipHook));
             }
 
             return dict;
@@ -137,7 +138,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
 
             foreach (var (key, value) in node.Children)
             {
-                dict.Add(serializationManager.Read<TKey>(key, context, skipHook), serializationManager.Read<TValue>(value, context, skipHook));
+                dict.Add(serializationManager.Read<TKey>(new ValueDataNode(key), context, skipHook), serializationManager.Read<TValue>(value, context, skipHook));
             }
 
             return dict;

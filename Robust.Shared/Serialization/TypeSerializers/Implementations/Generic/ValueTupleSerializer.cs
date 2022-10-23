@@ -7,6 +7,7 @@ using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Validation;
+using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Interfaces;
 
 namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
@@ -23,7 +24,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
                 throw new InvalidMappingException("Less than or more than 1 mappings provided to ValueTupleSerializer");
 
             var entry = node.Children.First();
-            var v1 = serializationManager.Read<T1>(entry.Key, context, skipHook, val.Item1);
+            var v1 = serializationManager.Read<T1>(new ValueDataNode(entry.Key), context, skipHook, val.Item1);
             var v2 = serializationManager.Read<T2>(entry.Value, context, skipHook, val.Item2);
 
             return (v1, v2);
@@ -33,13 +34,14 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
             IDependencyCollection dependencies,
             ISerializationContext? context = null)
         {
-            if (node.Children.Count != 1) return new ErrorNode(node, "More or less than 1 Mapping for ValueTuple found.");
+            if (node.Children.Count != 1)
+                return new ErrorNode(node, "More or less than 1 Mapping for ValueTuple found.");
 
             var entry = node.Children.First();
             var dict = new Dictionary<ValidationNode, ValidationNode>
             {
                 {
-                    serializationManager.ValidateNode(typeof(T1), entry.Key, context),
+                    serializationManager.ValidateNode(typeof(T1), new ValueDataNode(entry.Key), context),
                     serializationManager.ValidateNode(typeof(T2), entry.Value, context)
                 }
             };
@@ -51,14 +53,14 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Generic
             IDependencyCollection dependencies, bool alwaysWrite = false,
             ISerializationContext? context = null)
         {
-            var mapping = new MappingDataNode();
-
-            mapping.Add(
-                serializationManager.WriteValue(typeof(T1), value.Item1, alwaysWrite, context),
-                serializationManager.WriteValue(typeof(T2), value.Item2, alwaysWrite, context)
-            );
-
-            return mapping;
+            return new MappingDataNode
+            {
+                {
+                    serializationManager.WriteValueAs<ValueDataNode>(typeof(T1), value.Item1!, alwaysWrite, context)
+                        .Value,
+                    serializationManager.WriteValue(typeof(T2), value.Item2, alwaysWrite, context)
+                }
+            };
         }
 
         public (T1, T2) Copy(ISerializationManager serializationManager, (T1, T2) source, (T1, T2) target,

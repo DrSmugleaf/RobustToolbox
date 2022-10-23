@@ -8,7 +8,6 @@ using Robust.Shared.Serialization.Manager.Definition;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Sequence;
-using Robust.Shared.Serialization.Markdown.Value;
 using Robust.Shared.Serialization.TypeSerializers.Interfaces;
 using Robust.Shared.Utility;
 
@@ -137,8 +136,8 @@ public partial class SerializationManager
 
             if (field.Attribute is DataFieldAttribute dfa)
             {
-                if(!processedTags.Add(dfa.Tag)) continue; //tag was already processed, probably because we are using the same tag in an include
-                var key = new ValueDataNode(dfa.Tag);
+                var key = dfa.Tag;
+                if(!processedTags.Add(key)) continue; //tag was already processed, probably because we are using the same tag in an include
                 if (parent.TryGetValue(key, out var parentValue))
                 {
                     if (newMapping.TryGetValue(key, out var childValue))

@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using Robust.Shared.IoC;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Serialization.Manager;
-using Robust.Shared.Serialization.Manager.Attributes;
 using Robust.Shared.Serialization.Markdown;
 using Robust.Shared.Serialization.Markdown.Mapping;
 using Robust.Shared.Serialization.Markdown.Validation;
@@ -36,13 +35,7 @@ namespace Robust.Shared.Serialization.TypeSerializers.Implementations.Custom.Pro
 
             foreach (var (key, val) in node.Children)
             {
-                if (key is not ValueDataNode value)
-                {
-                    mapping.Add(new ErrorNode(key, $"Cannot cast node {key} to ValueDataNode."), serializationManager.ValidateNode(typeof(TValue), val, context));
-                    continue;
-                }
-
-                mapping.Add(PrototypeSerializer.Validate(serializationManager, value, dependencies, context), serializationManager.ValidateNode(typeof(TValue), val, context));
+                mapping.Add(PrototypeSerializer.Validate(serializationManager, new ValueDataNode(key), dependencies, context), serializationManager.ValidateNode(typeof(TValue), val, context));
             }
 
             return new ValidatedMappingNode(mapping);
