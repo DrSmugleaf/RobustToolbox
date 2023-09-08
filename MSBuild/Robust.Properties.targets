@@ -4,6 +4,8 @@
 
   <PropertyGroup>
     <TargetFramework>net7.0</TargetFramework>
+    <DisableImplicitNuGetFallbackFolder>true</DisableImplicitNuGetFallbackFolder>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <Import Project="Robust.Custom.targets" Condition="Exists('Robust.Custom.targets')"/>
