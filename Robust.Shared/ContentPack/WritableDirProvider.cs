@@ -28,7 +28,8 @@ namespace Robust.Shared.ContentPack
         public void CreateDir(ResPath path)
         {
             var fullPath = GetFullPath(path);
-            Directory.CreateDirectory(fullPath);
+            if (!Directory.Exists(fullPath))
+                Directory.CreateDirectory(fullPath);
         }
 
         /// <inheritdoc />
