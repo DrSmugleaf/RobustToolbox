@@ -1,25 +1,3 @@
-using System;
-using System.Linq;
-using System.Net;
-using Robust.Client.Configuration;
-using Robust.Client.Debugging;
-using Robust.Client.GameObjects;
-using Robust.Client.GameStates;
-using Robust.Client.Player;
-using Robust.Client.Utility;
-using Robust.Shared;
-using Robust.Shared.Configuration;
-using Robust.Shared.Enums;
-using Robust.Shared.GameObjects;
-using Robust.Shared.IoC;
-using Robust.Shared.Log;
-using Robust.Shared.Map;
-using Robust.Shared.Network;
-using Robust.Shared.Network.Messages;
-using Robust.Shared.Players;
-using Robust.Shared.Timing;
-using Robust.Shared.Utility;
-
 namespace Robust.Client
 {
     /// <inheritdoc />
@@ -34,6 +12,7 @@ namespace Robust.Client
         [Dependency] private readonly IGameTiming _timing = default!;
         [Dependency] private readonly IClientGameStateManager _gameStates = default!;
         [Dependency] private readonly ILogManager _logMan = default!;
+        [Dependency] private readonly IHttpManagerInternal _http = default!;
 
         /// <inheritdoc />
         public ushort DefaultPort { get; } = 1212;
@@ -260,6 +239,7 @@ namespace Robust.Client
             _entityManager.Shutdown();
             _mapManager.Shutdown();
             _discord.ClearPresence();
+            _http.Shutdown();
             Reset();
         }
 
