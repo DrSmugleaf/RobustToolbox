@@ -133,7 +133,7 @@ public partial class PrototypeManager
             if (array == null)
                 continue;
 
-            foreach (var (file, result) in array)
+            foreach (var (file, result) in array.OrderBy(f => f.File.CanonPath))
             {
                 foreach (var mapping in result)
                 {
