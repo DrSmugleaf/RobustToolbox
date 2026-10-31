@@ -25,7 +25,7 @@ namespace Robust.Shared.GameObjects;
 
 public abstract partial class SharedUserInterfaceSystem : EntitySystem
 {
-    [Dependency] private IConfigurationManager _cfg = default!; // Starlight
+    [Dependency] private IConfigurationManager _cfg = default!; // Starlight-edit
     [Dependency] private IDynamicTypeFactory _factory = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private INetManager _netManager = default!;
@@ -74,8 +74,7 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
     private static readonly Histogram.Child MonitorRangeParallel = UpdateHistogram.WithLabels("RangeParallel");
     private static readonly Histogram.Child MonitorRangeClose = UpdateHistogram.WithLabels("RangeClose");
 
-    // Reused histogram children per BUI / BUI key type.
-    private readonly Dictionary<Type, Histogram.Child> _setStateMonitors = new();
+    // Reused histogram children per BUI key type. Per state type monitors live in _stateMonitors.
     private readonly Dictionary<Type, Histogram.Child> _rangeCheckMonitors = new();
 
     private readonly Stopwatch _stopwatch = new();
@@ -95,13 +94,14 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
     {
         base.Initialize();
 
-        // Starlight BEGIN
+        // Starlight-start
         if (_netManager.IsServer)
         {
             Subs.CVar(_cfg, CVars.MetricsEnabled, v => _globalMetricsEnabled = v, true);
             Subs.CVar(_cfg, CVars.MetricsGranularUiSystem, v => _granularUiSystemMetricsEnabled = v, true);
+            InitializeMetrics();
         }
-        // Starlight END
+        // Starlight-end
 
         EntityManager.ComponentFactory.RegisterNetworkedFields<UserInterfaceComponent>(
             nameof(UserInterfaceComponent.Actors),
@@ -374,6 +374,11 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
                 break;
             case 1 << 0:
             {
+                // Starlight-start
+                if (MetricsEnabled)
+                    CountStateSends(ent, args.Player, StateKindActors);
+                // Starlight-end
+
                 var state = new UserInterfaceActorsDeltaState();
                 AddActors(ent, state.Actors, ref args);
 
@@ -382,6 +387,11 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             }
             case 1 << 2:
             {
+                // Starlight-start
+                if (MetricsEnabled)
+                    CountStateSends(ent, args.Player, StateKindStates);
+                // Starlight-end
+
                 var states = ent.Comp.States;
 
                 // TODO Game State
@@ -393,6 +403,11 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
                 return;
             }
         }
+
+        // Starlight-start
+        if (MetricsEnabled)
+            CountStateSends(ent, args.Player, StateKindFull);
+        // Starlight-end
 
         var actors = new Dictionary<Enum, List<NetEntity>>();
         var dataCopy = new Dictionary<Enum, InterfaceData>(ent.Comp.Interfaces.Count);
@@ -793,16 +808,14 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
         if (!entity.Comp.Interfaces.ContainsKey(key))
             return;
 
-        // Starlight BEGIN
-        Histogram.Child? monitor = null;
+        // Starlight-start
+        BuiStateMonitor? monitor = null;
         if (MetricsEnabled && state != null)
         {
-            var type = state.GetType();
-            if (!_setStateMonitors.TryGetValue(type, out monitor))
-                _setStateMonitors[type] = monitor = SetStateHistogram.WithLabels(type.Name);
+            monitor = GetStateMonitor(state.GetType());
             _stopwatch.Restart();
         }
-        // Starlight END
+        // Starlight-end
 
         // Null state
         if (state == null)
@@ -818,7 +831,10 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             ref var stateRef = ref CollectionsMarshal.GetValueRefOrAddDefault(entity.Comp.States, key, out var exists);
 
             if (exists && stateRef?.Equals(state) == true)
+            {
+                monitor?.Unchanged.Inc(); // Starlight-edit
                 return;
+            }
 
             stateRef = state;
         }
@@ -834,7 +850,15 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
         }
 
         DirtyField(entity, nameof(UserInterfaceComponent.States));
-        monitor?.Observe(_stopwatch.Elapsed.TotalSeconds); // Starlight
+
+        // Starlight-start
+        if (monitor != null)
+        {
+            monitor.SetState.Observe(_stopwatch.Elapsed.TotalSeconds);
+            monitor.Changed.Inc();
+            SampleStateSize(monitor, state!);
+        }
+        // Starlight-end
     }
 
     /// <summary>
@@ -1233,10 +1257,10 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             _queuedBuis.Clear();
         }
 
-        // Starlight BEGIN
+        // Starlight-start
         if (MetricsEnabled)
             _stopwatch.Restart();
-        // Starlight END
+        // Starlight-end
 
         var query = AllEntityQuery<ActiveUserInterfaceComponent, UserInterfaceComponent>();
         // Run these in parallel because it's expensive.
@@ -1262,38 +1286,38 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
                     if (_netManager.IsClient && !actor.IsValid())
                         continue; // Client might not have received the entity. Server should log errors.
 
-                    // Starlight BEGIN
+                    // Starlight-start
                     if (MetricsEnabled)
                     {
                         var keyType = key.GetType();
                         if (!_rangeCheckMonitors.ContainsKey(keyType))
                             _rangeCheckMonitors[keyType] = RangeCheckHistogram.WithLabels(keyType.Name);
                     }
-                    // Starlight END
+                    // Starlight-end
 
                     _rangeJob.ActorRanges.Add((uid, key, data, actor, false));
                 }
             }
         }
 
-        // Starlight BEGIN
+        // Starlight-start
         _rangeJob.RangeMonitors = MetricsEnabled ? _rangeCheckMonitors : null;
         if (MetricsEnabled)
         {
             MonitorRangeQuery.Observe(_stopwatch.Elapsed.TotalSeconds);
             _stopwatch.Restart();
         }
-        // Starlight END
+        // Starlight-end
 
         _parallel.ProcessNow(_rangeJob, _rangeJob.ActorRanges.Count);
 
-        // Starlight BEGIN
+        // Starlight-start
         if (MetricsEnabled)
         {
             MonitorRangeParallel.Observe(_stopwatch.Elapsed.TotalSeconds);
             _stopwatch.Restart();
         }
-        // Starlight END
+        // Starlight-end
 
         foreach (var data in _rangeJob.ActorRanges)
         {
@@ -1307,10 +1331,12 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             CloseUi((uid, uiComp), key, actor);
         }
 
-        // Starlight BEGIN
+        // Starlight-start
         if (MetricsEnabled)
             MonitorRangeClose.Observe(_stopwatch.Elapsed.TotalSeconds);
-        // Starlight END
+
+        PublishMetrics();
+        // Starlight-end
     }
 
     /// <summary>

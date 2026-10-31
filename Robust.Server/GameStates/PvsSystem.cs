@@ -158,6 +158,7 @@ internal sealed partial class PvsSystem : EntitySystem
 
         InitializeDirty();
         InitializePvsArray();
+        InitializeMetrics(); // Starlight-edit
     }
 
     public override void Shutdown()
@@ -178,6 +179,7 @@ internal sealed partial class PvsSystem : EntitySystem
 
         ClearPvsData();
         ShutdownDirty();
+        ShutdownMetrics(); // Starlight-edit
         _getStateHandlers = null;
     }
 
@@ -213,6 +215,8 @@ internal sealed partial class PvsSystem : EntitySystem
 
         // Compress & send the states.
         SendStates();
+
+        PublishMetrics(); // Starlight-edit
 
         // Cull deletion history
         AfterSerializeStates();

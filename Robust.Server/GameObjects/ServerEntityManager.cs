@@ -156,6 +156,7 @@ namespace Robust.Server.GameObjects
             _playerManager.PlayerStatusChanged += OnPlayerStatusChanged;
 
             _configurationManager.OnValueChanged(CVars.NetLogLateMsg, b => _logLateMsgs = b, true);
+            InitializeNetEventMetrics(); // Starlight-edit
         }
 
         /// <inheritdoc />
@@ -201,6 +202,7 @@ namespace Robust.Server.GameObjects
             if (recordReplay)
                 _replay.RecordServerMessage(message);
 
+            CountOutgoingNetEvent(message, _networkManager.ChannelCount); // Starlight-edit
             _networkManager.ServerSendToAll(newMsg);
         }
 
@@ -212,6 +214,7 @@ namespace Robust.Server.GameObjects
             newMsg.SystemMessage = message;
             newMsg.SourceTick = _gameTiming.CurTick;
 
+            CountOutgoingNetEvent(message, 1); // Starlight-edit
             _networkManager.ServerSendMessage(newMsg, targetConnection);
         }
 
@@ -263,6 +266,7 @@ namespace Robust.Server.GameObjects
                 {
                     case EntityMessageType.SystemMessage:
                         var msg = message.SystemMessage;
+                        CountIncomingNetEvent(msg); // Starlight-edit
                         var sessionType = typeof(EntitySessionMessage<>).MakeGenericType(msg.GetType());
                         var sessionMsg =
                             Activator.CreateInstance(sessionType, new EntitySessionEventArgs(player), msg)!;

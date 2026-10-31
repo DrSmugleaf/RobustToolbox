@@ -5,6 +5,7 @@ using Robust.Shared.Log;
 using Robust.Shared.Network.Messages;
 using Robust.Shared.Player;
 using Robust.Shared.Utility;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace Robust.Server.GameStates;
 
@@ -31,7 +32,16 @@ internal sealed partial class PvsSystem
     {
         try
         {
+            // Starlight-start
+            var metrics = BeginThreadMetrics();
+            var start = metrics != null ? Stopwatch.GetTimestamp() : 0;
+            // Starlight-end
+
             SendSessionState(data, resource.CompressionContext);
+
+            // Starlight-start
+            metrics?.SendTicks += Stopwatch.GetTimestamp() - start;
+            // Starlight-end
         }
         catch (Exception e)
         {

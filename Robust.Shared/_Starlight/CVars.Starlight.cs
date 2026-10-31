@@ -13,6 +13,19 @@ public abstract partial class CVars
         CVarDef.Create("metrics.granular_ui_system", false, CVar.SERVERONLY);
 
     /// <summary>
+    /// Whether to collect per-component and per-phase CPU time metrics while building game states in PVS.
+    /// Adds two timestamps per generated component state, so keep it off unless investigating.
+    /// </summary>
+    public static readonly CVarDef<bool> MetricsGranularPvs =
+        CVarDef.Create("metrics.granular_pvs", false, CVar.SERVERONLY);
+
+    /// <summary>
+    /// Whether to count networked entity events (RaiseNetworkEvent) per event type and direction.
+    /// </summary>
+    public static readonly CVarDef<bool> MetricsGranularNetEvents =
+        CVarDef.Create("metrics.granular_net_events", false, CVar.SERVERONLY);
+
+    /// <summary>
     /// Delay before starting complex clipping recovery for a stuck physics body.
     /// </summary>
     public static readonly CVarDef<float> PhysicsClippingRecoveryStuckDelay =

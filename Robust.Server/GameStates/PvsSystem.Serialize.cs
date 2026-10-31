@@ -9,6 +9,7 @@ using Robust.Shared.Player;
 using Robust.Shared.Serialization;
 using Robust.Shared.Timing;
 using Robust.Shared.Utility;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace Robust.Server.GameStates;
 
@@ -36,11 +37,18 @@ internal sealed partial class PvsSystem
         {
             var guid = i >= 0 ? _sessions[i].Session.UserId.UserId : default;
             ServerGameStateManager.PvsEventSource.Log.WorkStart(_gameTiming.CurTick.Value, i, guid);
+            var metrics = _currentThreadMetrics = BeginThreadMetrics(); // Starlight-edit
 
             if (i >= 0)
                 SerializeSessionState(_sessions[i]);
             else
+            {
+                // Starlight-start
+                var start = metrics != null ? Stopwatch.GetTimestamp() : 0;
                 _replay.Update();
+                metrics?.ReplayTicks += Stopwatch.GetTimestamp() - start;
+                // Starlight-end
+            }
 
             ServerGameStateManager.PvsEventSource.Log.WorkStop(_gameTiming.CurTick.Value, i, guid);
         }
@@ -52,6 +60,12 @@ internal sealed partial class PvsSystem
             throw;
 #endif
         }
+        // Starlight-start
+        finally
+        {
+            _currentThreadMetrics = null;
+        }
+        // Starlight-end
     }
 
     /// <summary>
@@ -59,9 +73,24 @@ internal sealed partial class PvsSystem
     /// </summary>
     private void SerializeSessionState(PvsSession data)
     {
+        // Starlight-start
+        var metrics = _currentThreadMetrics;
+        var start = metrics != null ? Stopwatch.GetTimestamp() : 0;
+        // Starlight-end
+
         ComputeSessionState(data);
         InterlockedHelper.Min(ref _oldestAck, data.FromTick.Value);
         DebugTools.AssertEqual(data.StateStream, null);
+
+        // Starlight-start
+        if (metrics != null)
+        {
+            var computed = Stopwatch.GetTimestamp();
+            metrics.ComputeTicks += computed - start;
+            start = computed;
+            StateEntitiesHistogram.Observe(data.States.Count);
+        }
+        // Starlight-end
 
         // PVS benchmarks use dummy sessions.
         // ReSharper disable once ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
@@ -69,6 +98,15 @@ internal sealed partial class PvsSystem
         {
             data.StateStream = RobustMemoryManager.GetMemoryStream();
             _serializer.SerializeDirect(data.StateStream, data.State);
+
+            // Starlight-start
+            if (metrics != null)
+            {
+                metrics.SerializeTicks += Stopwatch.GetTimestamp() - start;
+                metrics.StateBytes += data.StateStream.Length;
+                StateSizeHistogram.Observe(data.StateStream.Length);
+            }
+            // Starlight-end
         }
 
         ClearSessionState(data);
