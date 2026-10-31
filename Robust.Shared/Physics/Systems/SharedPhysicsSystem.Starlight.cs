@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Numerics;
+using System.Threading;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Map;
 using Robust.Shared.Maths;
@@ -13,13 +14,37 @@ namespace Robust.Shared.Physics.Systems;
 
 public abstract partial class SharedPhysicsSystem
 {
-    private const float ClippingRecoverySpeed = 0.5f;
-
     private const float ClippingRecoveryFieldSize = 0.5f;
     private const float ClippingRecoveryMaxFieldSize = 1f;
-    private const float ClippingRecoveryStartSeparation = -3f * PhysicsConstants.LinearSlop;
+    /// <summary>
+    /// Deeper than this, a body does not count as being at a safe position.
+    /// </summary>
+    private const float ClippingRecoveryUnsafeSeparation = -3f * PhysicsConstants.LinearSlop;
+
+    /// <summary>
+    /// Deeper than this, a body counts as stuck and may be moved out. It is much deeper than
+    /// <see cref="ClippingRecoveryUnsafeSeparation"/> because a body resting under load sinks a few centimeters,
+    /// and moving it out every time would keep it awake forever.
+    /// </summary>
+    private const float ClippingRecoveryStuckSeparation = -0.1f;
+
+    /// <summary>
+    /// Wait after a search that found no free position before searching for the same body again.
+    /// </summary>
+    private const float ClippingRecoveryRetryDelay = 5f;
+
     private const float ClippingRecoveryMaxPush = 0.5f;
     private const float PersistentRecoveryMaxGravityAlignment = 0.5f;
+
+    /// <summary>
+    /// Counts server solves, so safe position tracking can tell whether a body took part in the previous one.
+    /// </summary>
+    private uint _clippingRecoverySolveIndex;
+
+    /// <summary>
+    /// Total searches that found no free position. Islands are solved in parallel, so it is updated atomically.
+    /// </summary>
+    internal int ClippingRecoveryFailedSearches;
 
     private bool RecoverClippedBodies(
         in SolverData data,
@@ -69,8 +94,14 @@ public abstract partial class SharedPhysicsSystem
             if (body.InvMass <= 0f || !body.CanCollide)
                 continue;
 
-            var isRecovering = body.ClippingRecoveryDirection != Vector2.Zero;
-            if (!isRecovering &&
+            var separation = GetContactMinSeparation(in constraint, positions, angles, out _);
+            if (separation >= ClippingRecoveryUnsafeSeparation)
+                continue;
+
+            if (!prediction)
+                body.ClippingRecoveryPenetrating = true;
+
+            if (separation >= ClippingRecoveryStuckSeparation ||
                 !CanStartClippingRecovery(in data,
                     body,
                     linearVelocities[offset + clippedIndex],
@@ -79,10 +110,6 @@ public abstract partial class SharedPhysicsSystem
             {
                 continue;
             }
-
-            var separation = GetContactMinSeparation(in constraint, positions, angles, out _);
-            if (separation >= (isRecovering ? 0f : ClippingRecoveryStartSeparation))
-                continue;
 
             body.ClippingRecoveryActive = true;
         }
@@ -95,67 +122,105 @@ public abstract partial class SharedPhysicsSystem
 
             if (!body.ClippingRecoveryActive)
             {
-                body.ClippingRecoveryDirection = Vector2.Zero;
+                // A pending retry cooldown (negative time) survives while the body is still clipped,
+                // so briefly failing the start conditions does not allow an immediate new search.
+                if (!body.ClippingRecoveryPenetrating || body.ClippingRecoveryTime > 0f)
+                    body.ClippingRecoveryTime = 0f;
+                continue;
+            }
+
+            // Positive time counts how long a controller has been stuck. Dynamic bodies already had to settle for
+            // the sleep interval to get here, so they need no extra delay. Negative time is a retry cooldown.
+            var stuckDelay = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryStuckDelay));
+            var startDelay = body.BodyType == BodyType.Dynamic ? 0f : stuckDelay;
+            body.ClippingRecoveryTime = MathF.Min(startDelay, body.ClippingRecoveryTime + data.FrameTime);
+            if (body.ClippingRecoveryTime < startDelay)
+                continue;
+
+            var bodyEnt = island.Bodies[i];
+            var mapId = bodyEnt.Comp2.MapID;
+            if (mapId == MapId.Nullspace ||
+                !_fixturesQuery.TryGetComponent(bodyEnt.Owner, out var fixtures))
+            {
                 body.ClippingRecoveryTime = 0f;
                 continue;
             }
 
-            var direction = body.ClippingRecoveryDirection;
-            if (direction == Vector2.Zero)
-            {
-                if (prediction)
-                {
-                    body.ClippingRecoveryTime = 0f;
-                    continue;
-                }
-
-                var stuckDelay = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryStuckDelay));
-                if (body.BodyType == BodyType.Dynamic)
-                {
-                    body.ClippingRecoveryTime = stuckDelay;
-                }
-                else
-                {
-                    body.ClippingRecoveryTime = MathF.Min(
-                        stuckDelay,
-                        body.ClippingRecoveryTime + data.FrameTime);
-                    if (body.ClippingRecoveryTime < stuckDelay)
-                        continue;
-                }
-
-                var bodyEnt = island.Bodies[i];
-                var mapId = bodyEnt.Comp2.MapID;
-                if (mapId == MapId.Nullspace ||
-                    !_fixturesQuery.TryGetComponent(bodyEnt.Owner, out var fixtures))
-                {
-                    body.ClippingRecoveryTime = 0f;
-                    continue;
-                }
-
-                LogManager.GetSawmill("clipping_recovery").Info(
-                    "Starting complex clipping recovery search for {EntityName} ({EntityUid})",
-                    MetaData(bodyEnt.Owner).EntityName,
-                    bodyEnt.Owner);
-                direction = FindClippingRecoveryDirection(
+            if (!TryFindClippingRecoveryPosition(
                     mapId,
                     body,
                     fixtures,
                     positions[i],
-                    angles[i]);
-                body.ClippingRecoveryDirection = direction;
+                    angles[i],
+                    out var target))
+            {
+                // A clipped body can't sleep (its island never counts as position solved), so without a
+                // cooldown a body buried in rock would run the full search every tick.
+                body.ClippingRecoveryTime = -MathF.Max(stuckDelay, ClippingRecoveryRetryDelay);
+                Interlocked.Increment(ref ClippingRecoveryFailedSearches);
+                LogManager.GetSawmill("clipping_recovery").Debug(
+                    "No free position found for clipped {EntityName} ({EntityUid})",
+                    MetaData(bodyEnt.Owner).EntityName,
+                    bodyEnt.Owner);
+                continue;
             }
 
-            ref var velocity = ref linearVelocities[offset + i];
-            var intoRecoveryDirection = Vector2.Dot(velocity, direction);
-            if (intoRecoveryDirection < 0f)
-                velocity -= direction * intoRecoveryDirection;
+            body.ClippingRecoveryTime = 0f;
 
-            positions[i] += direction * (ClippingRecoverySpeed * data.FrameTime);
+            // Move in one step to a position verified free of static geometry, so the body never spends
+            // ticks inside walls with its static contacts ignored.
+            positions[i] = target;
+            linearVelocities[offset + i] = Vector2.Zero;
+            angularVelocities[offset + i] = 0f;
             SetSleepTime(body, 0f);
             moved = true;
         }
 
         return moved;
+    }
+
+    private void TrackClippingRecoverySafePosition(PhysicsComponent body, TransformComponent xform)
+    {
+        if (!IsClippingRecoveryBody(body))
+            return;
+
+        if (body.ClippingRecoveryCandidateSolve != _clippingRecoverySolveIndex - 1)
+        {
+            // The body skipped solves (slept, sat in a container, was carried or moved through disposals),
+            // so the remembered position may be on the other side of a wall from where it is now.
+            body.ClippingRecoverySafeParent = EntityUid.Invalid;
+        }
+        else if (!body.ClippingRecoveryPenetrating)
+        {
+            // The candidate is where the previous solve started; it only becomes safe if that solve ended unclipped.
+            // Using the previous start rather than the current position ignores teleports straight into walls.
+            body.ClippingRecoverySafeParent = body.ClippingRecoveryCandidateParent;
+            body.ClippingRecoverySafePosition = body.ClippingRecoveryCandidatePosition;
+        }
+
+        body.ClippingRecoveryCandidateSolve = _clippingRecoverySolveIndex;
+        body.ClippingRecoveryCandidateParent = xform.ParentUid;
+        body.ClippingRecoveryCandidatePosition = xform.LocalPosition;
+        body.ClippingRecoveryPenetrating = false;
+    }
+
+    private bool TryGetClippingRecoverySafePosition(
+        PhysicsComponent body,
+        MapId mapId,
+        float angle,
+        out Vector2 safePosition)
+    {
+        safePosition = default;
+        if (!body.ClippingRecoverySafeParent.IsValid() ||
+            !XformQuery.TryGetComponent(body.ClippingRecoverySafeParent, out var parentXform) ||
+            parentXform.MapID != mapId)
+        {
+            return false;
+        }
+
+        var origin = Vector2.Transform(body.ClippingRecoverySafePosition, _transform.GetWorldMatrix(parentXform));
+        safePosition = origin + Physics.Transform.Mul(new Transform(angle).Quaternion2D, body.LocalCenter);
+        return true;
     }
 
     private bool RecoverClippedBodiesSimple(
@@ -199,11 +264,8 @@ public abstract partial class SharedPhysicsSystem
                     continue;
 
                 var body = island.Bodies[clippedIndex].Comp1;
-                if (body.InvMass <= 0f || !body.CanCollide ||
-                    body.ClippingRecoveryDirection != Vector2.Zero)
-                {
+                if (body.InvMass <= 0f || !body.CanCollide)
                     continue;
-                }
 
                 var separation = GetContactMinSeparation(in constraint, positions, angles, out var contactNormal);
                 if (contactNormal == Vector2.Zero)
@@ -277,56 +339,49 @@ public abstract partial class SharedPhysicsSystem
         }
     }
 
-    private static void PrepareClippingRecoveryPositionConstraints(
-        in IslandData island,
-        ContactPositionConstraint[] positionConstraints)
-    {
-        // Prevent the static position solver from undoing the chosen recovery step.
-        for (var i = 0; i < island.Contacts.Count; i++)
-        {
-            ref var constraint = ref positionConstraints[i];
-            var bodyA = island.Bodies[constraint.IndexA].Comp1;
-            var bodyB = island.Bodies[constraint.IndexB].Comp1;
-
-            if (bodyA.ClippingRecoveryActive &&
-                bodyA.ClippingRecoveryDirection != Vector2.Zero &&
-                bodyB.BodyType == BodyType.Static)
-            {
-                constraint.InvMassA = 0f;
-                constraint.InvIA = 0f;
-            }
-
-            if (bodyB.ClippingRecoveryActive &&
-                bodyB.ClippingRecoveryDirection != Vector2.Zero &&
-                bodyA.BodyType == BodyType.Static)
-            {
-                constraint.InvMassB = 0f;
-                constraint.InvIB = 0f;
-            }
-        }
-    }
-
-    private Vector2 FindClippingRecoveryDirection(
+    private bool TryFindClippingRecoveryPosition(
         MapId mapId,
         PhysicsComponent body,
         FixturesComponent fixtures,
         Vector2 position,
-        float angle)
+        float angle,
+        out Vector2 target)
     {
+        var maxDistance = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxDistance));
+        var preferredDirection = Vector2.Zero;
+
+        if (TryGetClippingRecoverySafePosition(body, mapId, angle, out var safePosition))
+        {
+            var toSafe = safePosition - position;
+            var distanceSquared = toSafe.LengthSquared();
+            if (distanceSquared <= maxDistance * maxDistance)
+            {
+                if (!IsPositionColliding(mapId, body, fixtures, safePosition, angle))
+                {
+                    target = safePosition;
+                    return true;
+                }
+
+                // Something now occupies the safe position; still prefer to come out on that side.
+                if (distanceSquared > float.Epsilon)
+                    preferredDirection = toSafe / MathF.Sqrt(distanceSquared);
+            }
+        }
+
         var fieldSize = GetClippingRecoverySampleSpacing(fixtures, angle);
         var collisionQueries = 0;
-        var maxDistance = MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxDistance));
         var fullScanDistance = MathF.Min(
             maxDistance,
             MathF.Max(0f, _cfg.GetCVar(CVars.PhysicsClippingRecoveryFullScanDistance)));
         var maxOuterRingSamples = Math.Max(0, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxOuterRingSamples));
         var maxCollisionQueries = Math.Max(0, _cfg.GetCVar(CVars.PhysicsClippingRecoveryMaxCollisionQueries));
-        var offset = FindFirstClippingRecoveryOffset(
+        var offset = FindClippingRecoveryOffset(
             mapId,
             body,
             fixtures,
             position,
             angle,
+            preferredDirection,
             fieldSize,
             maxDistance,
             fullScanDistance,
@@ -334,7 +389,8 @@ public abstract partial class SharedPhysicsSystem
             maxCollisionQueries,
             ref collisionQueries);
 
-        return offset == Vector2.Zero ? Vector2.UnitY : Vector2.Normalize(offset);
+        target = position + offset;
+        return offset != Vector2.Zero;
     }
 
     private static float GetClippingRecoverySampleSpacing(FixturesComponent fixtures, float angle)
@@ -373,12 +429,17 @@ public abstract partial class SharedPhysicsSystem
             MathF.Min(ClippingRecoveryMaxFieldSize, objectSize * 0.5f));
     }
 
-    private Vector2 FindFirstClippingRecoveryOffset(
+    /// <summary>
+    /// Searches square rings around the body for an offset free of static geometry. Without a preferred direction the
+    /// first free sample wins; with one, the free sample of the nearest ring that best matches it wins.
+    /// </summary>
+    private Vector2 FindClippingRecoveryOffset(
         MapId mapId,
         PhysicsComponent body,
         FixturesComponent fixtures,
         Vector2 position,
         float angle,
+        Vector2 preferredDirection,
         float fieldSize,
         float maxDistance,
         float fullScanDistance,
@@ -412,6 +473,8 @@ public abstract partial class SharedPhysicsSystem
 
             var validSampleIndex = 0;
             var sampledIndex = 0;
+            var bestOffset = Vector2.Zero;
+            var bestAlignment = float.NegativeInfinity;
             for (var sampleIndex = 0; sampleIndex < ringSampleCount; sampleIndex++)
             {
                 var offset = GetClippingRecoveryRingOffset(ring, sampleIndex, fieldSize);
@@ -426,13 +489,27 @@ public abstract partial class SharedPhysicsSystem
                     continue;
 
                 sampledIndex++;
-                collisionQueries++;
-                if (!IsPositionColliding(mapId, body, fixtures, position + offset, angle))
-                    return offset;
+
+                var alignment = Vector2.Dot(offset, preferredDirection) / MathF.Sqrt(distanceSquared);
+                if (alignment > bestAlignment)
+                {
+                    collisionQueries++;
+                    if (!IsPositionColliding(mapId, body, fixtures, position + offset, angle))
+                    {
+                        if (preferredDirection == Vector2.Zero)
+                            return offset;
+
+                        bestOffset = offset;
+                        bestAlignment = alignment;
+                    }
+                }
 
                 if (sampledIndex == samplesThisRing)
                     break;
             }
+
+            if (bestOffset != Vector2.Zero)
+                return bestOffset;
 
             if (collisionQueries >= maxCollisionQueries)
                 return Vector2.Zero;

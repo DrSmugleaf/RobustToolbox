@@ -308,6 +308,11 @@ public abstract partial class SharedPhysicsSystem
 
     private void Solve(float frameTime, float dtRatio, float invDt, bool prediction)
     {
+        // Starlight - start
+        if (!prediction)
+            _clippingRecoverySolveIndex++;
+        // Starlight - end
+
         _islands.Clear();
         var phaseStart = PhaseTimestamp();
         using (_prof.Group("Build Islands"))
@@ -770,7 +775,6 @@ public abstract partial class SharedPhysicsSystem
         var gravity = Gravity;
 
         // Starlight - start
-        var shouldPrepareClippingRecovery = false;
         var shouldCheckClippingRecovery = false;
         // Starlight - end
 
@@ -780,19 +784,18 @@ public abstract partial class SharedPhysicsSystem
             var body = bodyEnt.Comp1;
 
             // Starlight - start
-            if (body.ClippingRecoveryDirection != Vector2.Zero)
+            if (!prediction)
             {
-                shouldPrepareClippingRecovery = true;
-                shouldCheckClippingRecovery = true;
-            }
-            else if (!prediction &&
-                     (body.ClippingRecoveryTime > 0f ||
-                      (data.SleepAllowed &&
-                       body.BodyType == BodyType.Dynamic &&
-                       body.SleepingAllowed &&
-                       body.SleepTime + data.FrameTime >= data.TimeToSleep)))
-            {
-                shouldCheckClippingRecovery = true;
+                TrackClippingRecoverySafePosition(body, bodyEnt.Comp2);
+
+                if (body.ClippingRecoveryTime != 0f ||
+                    (data.SleepAllowed &&
+                     body.BodyType == BodyType.Dynamic &&
+                     body.SleepingAllowed &&
+                     body.SleepTime + data.FrameTime >= data.TimeToSleep))
+                {
+                    shouldCheckClippingRecovery = true;
+                }
             }
             // Starlight - end
 
@@ -916,11 +919,6 @@ public abstract partial class SharedPhysicsSystem
             positions[i] += linearVelocity * data.FrameTime;
             angles[i] += angularVelocity * data.FrameTime;
         }
-
-        // Starlight - start
-        if (shouldPrepareClippingRecovery)
-            PrepareClippingRecoveryPositionConstraints(in island, positionConstraints);
-        // Starlight - end
 
         island.PositionSolved = false;
 
