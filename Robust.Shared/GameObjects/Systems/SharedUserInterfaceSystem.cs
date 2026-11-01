@@ -60,22 +60,22 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
         });
 
-    private static readonly Histogram RangeCheckHistogram = Metrics.CreateHistogram(
-        "robust_bui_range_check_usage",
-        "Time spent in range checks per BUI key type",
-        new HistogramConfiguration
-        {
-            LabelNames = new[] { "bui" },
-            Buckets = Histogram.ExponentialBuckets(0.000_001, 1.5, 25)
-        });
+    // Counted on the main thread instead of timing every check inside the parallel range job: per-check timestamps
+    // plus Observe() on one shared histogram from every core serialized the job on large servers.
+    private static readonly Counter RangeChecksCounter = Metrics.CreateCounter(
+        "robust_bui_range_checks",
+        "Number of UI range checks per BUI key type",
+        new CounterConfiguration { LabelNames = new[] { "bui" } });
 
     // The three 'phases' of the Update method.
     private static readonly Histogram.Child MonitorRangeQuery = UpdateHistogram.WithLabels("RangeQuery");
     private static readonly Histogram.Child MonitorRangeParallel = UpdateHistogram.WithLabels("RangeParallel");
     private static readonly Histogram.Child MonitorRangeClose = UpdateHistogram.WithLabels("RangeClose");
+    private static readonly Histogram.Child MonitorPublish = UpdateHistogram.WithLabels("PublishMetrics");
 
-    // Reused histogram children per BUI key type. Per state type monitors live in _stateMonitors.
-    private readonly Dictionary<Type, Histogram.Child> _rangeCheckMonitors = new();
+    // Range checks per BUI key type this tick, and reused counter children. Per state type monitors live in _stateMonitors.
+    private readonly Dictionary<Type, long> _rangeCheckCounts = new();
+    private readonly Dictionary<Type, Counter.Child> _rangeCheckMonitors = new();
 
     private readonly Stopwatch _stopwatch = new();
 
@@ -1288,11 +1288,7 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
 
                     // Starlight-start
                     if (MetricsEnabled)
-                    {
-                        var keyType = key.GetType();
-                        if (!_rangeCheckMonitors.ContainsKey(keyType))
-                            _rangeCheckMonitors[keyType] = RangeCheckHistogram.WithLabels(keyType.Name);
-                    }
+                        CollectionsMarshal.GetValueRefOrAddDefault(_rangeCheckCounts, key.GetType(), out _)++;
                     // Starlight-end
 
                     _rangeJob.ActorRanges.Add((uid, key, data, actor, false));
@@ -1301,7 +1297,6 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
         }
 
         // Starlight-start
-        _rangeJob.RangeMonitors = MetricsEnabled ? _rangeCheckMonitors : null;
         if (MetricsEnabled)
         {
             MonitorRangeQuery.Observe(_stopwatch.Elapsed.TotalSeconds);
@@ -1333,9 +1328,12 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
 
         // Starlight-start
         if (MetricsEnabled)
+        {
             MonitorRangeClose.Observe(_stopwatch.Elapsed.TotalSeconds);
-
-        PublishMetrics();
+            _stopwatch.Restart();
+            PublishMetrics();
+            MonitorPublish.Observe(_stopwatch.Elapsed.TotalSeconds);
+        }
         // Starlight-end
     }
 
@@ -1402,7 +1400,6 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
     {
         public required EntityQuery<TransformComponent> XformQuery;
         public required SharedUserInterfaceSystem System;
-        public Dictionary<Type, Histogram.Child>? RangeMonitors; // Starlight: Monitoring
         public readonly List<(EntityUid Ui, Enum Key, InterfaceData Data, EntityUid Actor, bool Result)> ActorRanges = new();
 
         public void Execute(int index)
@@ -1416,10 +1413,7 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
             }
             else
             {
-                var start = Stopwatch.GetTimestamp(); // Starlight
                 data.Result = System.CheckRange((data.Ui, uiXform), data.Key, data.Data, (data.Actor, actorXform));
-                if (RangeMonitors != null && RangeMonitors.TryGetValue(data.Key.GetType(), out var monitor)) // Starlight
-                    monitor.Observe(Stopwatch.GetElapsedTime(start).TotalSeconds); // Starlight
             }
 
             ActorRanges[index] = data;

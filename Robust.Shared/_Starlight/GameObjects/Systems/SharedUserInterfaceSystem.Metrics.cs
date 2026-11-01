@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading;
+using Robust.Shared.Utility;
 using Prometheus;
 using Robust.Shared.IoC;
 using Robust.Shared.Player;
@@ -59,11 +59,12 @@ public abstract partial class SharedUserInterfaceSystem
 
     private readonly Dictionary<Type, BuiStateMonitor> _stateMonitors = new();
     private readonly MemoryStream _sizeStream = new();
-    private ThreadLocal<BuiThreadMetrics>? _threadMetrics;
+    private PerThreadMetrics<BuiThreadMetrics>? _threadMetrics;
+    private readonly List<BuiThreadMetrics> _collectedMetrics = new();
 
     private void InitializeMetrics()
     {
-        _threadMetrics = new ThreadLocal<BuiThreadMetrics>(() => new BuiThreadMetrics(), trackAllValues: true);
+        _threadMetrics = new PerThreadMetrics<BuiThreadMetrics>();
     }
 
     public override void Shutdown()
@@ -119,7 +120,7 @@ public abstract partial class SharedUserInterfaceSystem
         if (_threadMetrics == null)
             return;
 
-        var metrics = _threadMetrics.Value!;
+        var metrics = _threadMetrics.Value;
         metrics.ComponentStates[kind]++;
 
         if (kind == StateKindActors)
@@ -147,10 +148,23 @@ public abstract partial class SharedUserInterfaceSystem
     /// </summary>
     private void PublishMetrics()
     {
+        foreach (var (keyType, count) in _rangeCheckCounts)
+        {
+            if (count == 0)
+                continue;
+
+            if (!_rangeCheckMonitors.TryGetValue(keyType, out var monitor))
+                _rangeCheckMonitors[keyType] = monitor = RangeChecksCounter.WithLabels(keyType.Name);
+
+            monitor.Inc(count);
+            _rangeCheckCounts[keyType] = 0;
+        }
+
         if (_threadMetrics == null)
             return;
 
-        foreach (var metrics in _threadMetrics.Values)
+        _threadMetrics.Collect(_collectedMetrics);
+        foreach (var metrics in _collectedMetrics)
         {
             for (var kind = 0; kind < metrics.ComponentStates.Length; kind++)
             {

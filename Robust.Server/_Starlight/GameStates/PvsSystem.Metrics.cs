@@ -1,5 +1,6 @@
 using System;
-using System.Threading;
+using System.Collections.Generic;
+using Robust.Shared.Utility;
 using Prometheus;
 using Robust.Shared;
 using Robust.Shared.GameObjects;
@@ -50,7 +51,8 @@ internal sealed partial class PvsSystem
     [ThreadStatic]
     private static PvsThreadMetrics? _currentThreadMetrics;
 
-    private ThreadLocal<PvsThreadMetrics> _threadMetrics = default!;
+    private PerThreadMetrics<PvsThreadMetrics> _threadMetrics = default!;
+    private readonly List<PvsThreadMetrics> _collectedMetrics = new();
     private (Counter.Child Seconds, Counter.Child Count)[]? _componentMonitors;
 
     private bool _globalMetricsEnabled;
@@ -59,7 +61,7 @@ internal sealed partial class PvsSystem
 
     private void InitializeMetrics()
     {
-        _threadMetrics = new ThreadLocal<PvsThreadMetrics>(() => new PvsThreadMetrics(), trackAllValues: true);
+        _threadMetrics = new PerThreadMetrics<PvsThreadMetrics>();
         Subs.CVar(_configManager, CVars.MetricsEnabled, v => _globalMetricsEnabled = v, true);
         Subs.CVar(_configManager, CVars.MetricsGranularPvs, v => _granularMetricsEnabled = v, true);
     }
@@ -74,7 +76,7 @@ internal sealed partial class PvsSystem
         if (!GranularMetrics)
             return null;
 
-        var metrics = _threadMetrics.Value!;
+        var metrics = _threadMetrics.Value;
         metrics.EnsureSize(EntityManager.ComponentFactory.NetworkedComponents?.Count ?? 0);
         return metrics;
     }
@@ -95,7 +97,8 @@ internal sealed partial class PvsSystem
         _componentMonitors ??= new (Counter.Child, Counter.Child)[registrations.Count];
         var freq = (double) Stopwatch.Frequency;
 
-        foreach (var metrics in _threadMetrics.Values)
+        _threadMetrics.Collect(_collectedMetrics);
+        foreach (var metrics in _collectedMetrics)
         {
             var count = Math.Min(metrics.ComponentCount.Length, _componentMonitors.Length);
             for (var netId = 0; netId < count; netId++)
