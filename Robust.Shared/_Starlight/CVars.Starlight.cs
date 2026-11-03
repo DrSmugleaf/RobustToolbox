@@ -125,4 +125,11 @@ public abstract partial class CVars
     /// </summary>
     public static readonly CVarDef<bool> DisplayRenderDoc =
         CVarDef.Create("display.renderdoc", false, CVar.CLIENTONLY);
+
+    /// <summary>
+    /// Maximum bytes used by incomplete Lidgren fragment groups across all connections.
+    /// Caps reassembly memory no matter how many connections an attacker opens.
+    /// </summary>
+    public static readonly CVarDef<int> NetMaxFragmentReassemblyBytes =
+        CVarDef.Create("net.max_fragment_reassembly_bytes", 512 * 1024 * 1024, CVar.ARCHIVE);
 }

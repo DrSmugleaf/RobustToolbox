@@ -168,7 +168,11 @@ namespace Robust.Server.GameObjects
             {
                 while (_queue.Count != 0 && _queue.Peek().SourceTick <= _gameTiming.CurTick)
                 {
-                    DispatchEntityNetworkMessage(_queue.Take());
+                    // Starlight-start
+                    var message = _queue.Take();
+                    DequeuedEntityNetworkMessage(message);
+                    DispatchEntityNetworkMessage(message);
+                    // Starlight-end
                 }
             }
 
@@ -237,8 +241,43 @@ namespace Robust.Server.GameObjects
                 }
             }
 
+            // Starlight-start: SourceTick is client controlled, a far future tick kept the message queued forever
+            var maxTick = _gameTiming.CurTick + (uint) (_gameTiming.TickRate * MaxEntityMessageFutureSeconds);
+            if (message.SourceTick > maxTick)
+                message.SourceTick = maxTick;
+
+            var queued = _queuedEntityMessages.GetValueOrDefault(message.MsgChannel) + 1;
+            if (queued > MaxQueuedEntityMessagesPerChannel)
+            {
+                _netEntSawmill.Warning($"Too many queued MsgEntity from {message.MsgChannel.UserName}, disconnecting");
+                message.MsgChannel.Disconnect("Too many queued entity messages");
+                return;
+            }
+
+            _queuedEntityMessages[message.MsgChannel] = queued;
+            // Starlight-end
+
             _queue.Add(message);
         }
+
+        // Starlight-start
+        private const float MaxEntityMessageFutureSeconds = 2f;
+        private const int MaxQueuedEntityMessagesPerChannel = 1024;
+
+        private readonly Dictionary<INetChannel, int> _queuedEntityMessages = new();
+
+        private void DequeuedEntityNetworkMessage(MsgEntity message)
+        {
+            var channel = message.MsgChannel;
+            if (!_queuedEntityMessages.TryGetValue(channel, out var queued))
+                return;
+
+            if (queued <= 1 || !channel.IsConnected)
+                _queuedEntityMessages.Remove(channel);
+            else
+                _queuedEntityMessages[channel] = queued - 1;
+        }
+        // Starlight-end
 
         private void DispatchEntityNetworkMessage(MsgEntity message)
         {

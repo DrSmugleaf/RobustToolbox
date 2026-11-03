@@ -29,6 +29,7 @@ namespace Robust.Shared.Network.Messages
             {
                 buffer.ReadPadBits();
                 var length = buffer.ReadVariableInt32();
+                buffer.ValidateReadLength(length); // Starlight-edit
                 using var stream = RobustMemoryManager.GetMemoryStream(length);
                 buffer.ReadAlignedMemory(stream, length);
                 serializer.DeserializeDirect(stream, out Echo);

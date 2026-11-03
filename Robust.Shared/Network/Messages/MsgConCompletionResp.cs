@@ -16,6 +16,7 @@ public sealed class MsgConCompletionResp : NetMessage
         Seq = buffer.ReadInt32();
 
         var len = buffer.ReadVariableInt32();
+        buffer.ValidateReadLength(len); // Starlight-edit
         var options = new CompletionOption[len];
         for (var i = 0; i < len; i++)
         {

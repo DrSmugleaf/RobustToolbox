@@ -104,11 +104,25 @@ namespace Robust.Shared.Network
                 throw new ArgumentException("Read position in message must be byte-aligned", nameof(message));
             }
 
+            message.ValidateReadLength(length); // Starlight-edit
+
             DebugTools.Assert(memStream.Position == 0);
             memStream.Write(message.Data, message.PositionInBytes, length);
             memStream.Position = 0;
             message.Position += length * 8;
         }
+
+        #region Starlight
+        /// <summary>
+        ///     Throws if a remote supplied length is negative or exceeds the bytes left in the message.
+        ///     Call before allocating anything sized by that length.
+        /// </summary>
+        public static void ValidateReadLength(this NetIncomingMessage message, int length)
+        {
+            if (length < 0 || length > message.LengthBytes - message.PositionInBytes)
+                throw new InvalidDataException($"Length {length} exceeds remaining {message.LengthBytes - message.PositionInBytes} bytes in message.");
+        }
+        #endregion
 
         public static TimeSpan ReadTimeSpan(this NetIncomingMessage message)
         {

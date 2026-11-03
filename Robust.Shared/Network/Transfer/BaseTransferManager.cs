@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -51,6 +51,11 @@ internal abstract partial class BaseTransferManager
         if ((accept & _side) > 0)
             slot.Callback = rxCallback;
     }
+
+    #region Starlight
+    internal bool CanReceive(string key)
+        => RegisteredKeys.TryGetValue(key, out var registered) && registered.Callback != null;
+    #endregion
 
     internal void TransferReceived(string key, INetChannel channel, Stream stream)
     {

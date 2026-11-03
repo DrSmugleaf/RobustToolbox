@@ -83,6 +83,7 @@ internal abstract class MsgViewVariablesPathRes : MsgViewVariablesPath
         base.ReadFromBuffer(buffer, serializer);
         ResponseCode = (ViewVariablesResponseCode) buffer.ReadUInt16();
         var length = buffer.ReadInt32();
+        buffer.ValidateReadLength(length); // Starlight-edit
         Response = new string[length];
 
         for (var i = 0; i < length; i++)
@@ -157,6 +158,7 @@ internal sealed class MsgViewVariablesListPathReq : MsgViewVariablesPathReq
     {
         base.ReadFromBuffer(buffer, serializer);
         var length = buffer.ReadInt32();
+        buffer.ValidateReadLength(length); // Starlight-edit
         using var stream = RobustMemoryManager.GetMemoryStream(length);
         buffer.ReadAlignedMemory(stream, length);
         Options = serializer.Deserialize<VVListPathOptions>(stream);

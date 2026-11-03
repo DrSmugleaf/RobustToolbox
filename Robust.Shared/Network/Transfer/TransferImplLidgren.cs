@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.IO;
 using System.Threading;
@@ -80,6 +80,16 @@ internal sealed class TransferImplLidgren(
             var (flags, transferId, channel) = _parsedHeader.Value;
 
             _parsedHeader = null;
+
+            // Starlight-start
+            if (QueuedReceiveChunks() >= MaxQueuedReceiveChunks)
+            {
+                ArrayPool<byte>.Shared.Return(data.Data.Array);
+                Sawmill.Warning($"Disconnecting client {Channel}: transfer receive buffer overflow");
+                Channel.Disconnect("Transfer receive buffer overflow");
+                return;
+            }
+            // Starlight-end
 
             channel.WriteAsync(data.Data).AsTask().Wait();
 

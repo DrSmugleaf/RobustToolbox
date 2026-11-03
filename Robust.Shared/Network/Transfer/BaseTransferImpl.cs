@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
@@ -36,7 +36,11 @@ internal abstract class BaseTransferImpl(ISawmill sawmill, BaseTransferManager p
     protected long OutgoingIdCounter;
     public int MaxChannelCount = int.MaxValue;
 
-    private readonly Dictionary<long, ChannelWriter<ArraySegment<byte>>> _receivingChannels = [];
+    // Starlight-edit: keep the whole channel so the unread backlog can be counted
+    private readonly Dictionary<long, Channel<ArraySegment<byte>>> _receivingChannels = [];
+
+    // Starlight: 4096 * 16 KiB = 64 MiB of unread data per connection before it gets kicked
+    internal const int MaxQueuedReceiveChunks = 4096;
 
     private readonly SemaphoreSlim _socketSemaphore = new(1, 1);
     internal readonly BaseTransferManager Parent = parent;
@@ -49,16 +53,34 @@ internal abstract class BaseTransferImpl(ISawmill sawmill, BaseTransferManager p
 
     private void TransferReceived(string key, ChannelReader<ArraySegment<byte>> reader)
     {
-        if (_receivingChannels.Count >= MaxChannelCount)
-        {
-            Sawmill.Warning($"Disconnecting client {Channel} for breaching max channel count of {_receivingChannels}");
-            Channel.Disconnect("Reached max transfer channel count");
-            return;
-        }
-
         var stream = new ReceiveStream(reader);
         Parent.TransferReceived(key, Channel, stream);
     }
+
+    #region Starlight
+    /// <summary>
+    /// Unread chunks buffered across all receiving transfers of this connection.
+    /// Only meaningful for unbounded channels, bounded ones apply backpressure instead.
+    /// </summary>
+    protected int QueuedReceiveChunks()
+    {
+        var total = 0;
+        foreach (var channel in _receivingChannels.Values)
+        {
+            if (channel.Reader.CanCount)
+                total += channel.Reader.Count;
+        }
+
+        return total;
+    }
+
+    private void RejectTransfer(string reason)
+    {
+        Sawmill.Warning($"Disconnecting client {Channel}: {reason}");
+        Channel.Disconnect(reason);
+        throw new ProtocolViolationException(reason);
+    }
+    #endregion
 
     protected void HandleHeaderReceived(
         ReadOnlyMemory<byte> data,
@@ -68,12 +90,25 @@ internal abstract class BaseTransferImpl(ISawmill sawmill, BaseTransferManager p
     {
         ParseHeader(data.Span, out flags, out transferId, out var key);
 
-        if (!_receivingChannels.TryGetValue(transferId, out channel!))
+        if (_receivingChannels.TryGetValue(transferId, out var existing)) // Starlight-edit
+        {
+            channel = existing.Writer;
+        }
+        else
         {
             if ((flags & TransferFlags.Start) == 0)
                 throw new ProtocolViolationException($"Received data for unknown transfer {transferId}");
 
             DebugTools.Assert(key != null);
+
+            // Starlight-start: validate before registering, an unknown key used to leave a channel
+            // nobody reads from, and every following data chunk stayed buffered forever
+            if (!Parent.CanReceive(key))
+                RejectTransfer($"Transfer with unknown or send-only key '{key}'");
+
+            if (_receivingChannels.Count >= MaxChannelCount)
+                RejectTransfer($"Reached max transfer channel count of {MaxChannelCount}");
+            // Starlight-end
 
             Sawmill.Verbose($"Starting transfer stream {transferId} with key {key}");
 
@@ -91,7 +126,7 @@ internal abstract class BaseTransferImpl(ISawmill sawmill, BaseTransferManager p
                 });
 
             channel = fullChannel.Writer;
-            _receivingChannels.Add(transferId, channel);
+            _receivingChannels.Add(transferId, fullChannel); // Starlight-edit
 
             TransferReceived(key, fullChannel.Reader);
         }
@@ -416,7 +451,7 @@ internal abstract class BaseTransferImpl(ISawmill sawmill, BaseTransferManager p
     {
         foreach (var channel in _receivingChannels.Values)
         {
-            channel.Complete();
+            channel.Writer.Complete(); // Starlight-edit
         }
     }
 

@@ -281,6 +281,7 @@ namespace Robust.Shared.Network
             _config.OnValueChanged(CVars.NetRapidConnectionDecay, RapidConnectionDecayChanged);
             _config.OnValueChanged(CVars.NetMaxFragmentReassemblyBytesPerConnection, MaxFragmentReassemblyBytesPerConnectionChanged);
             _config.OnValueChanged(CVars.NetFragmentGroupTimeout, FragmentGroupTimeoutChanged);
+            _config.OnValueChanged(CVars.NetMaxFragmentReassemblyBytes, MaxFragmentReassemblyBytesChanged); // Starlight-edit
 
             _config.OnValueChanged(CVars.NetVerbose, NetVerboseChanged);
             _config.OnValueChanged(CVars.NetLogging, NetLoggingChanged);
@@ -424,6 +425,14 @@ namespace Robust.Shared.Network
                 netPeer.Peer.Configuration.FragmentGroupTimeout = timeout;
             }
         }
+
+        // Starlight start
+        private void MaxFragmentReassemblyBytesChanged(int limit)
+        {
+            foreach (var netPeer in _netPeers)
+                netPeer.Peer.Configuration.MaximumFragmentReassemblyBytes = limit;
+        }
+        // Starlight end
 
         private void OnAuthModeChanged(int mode)
         {
@@ -615,6 +624,7 @@ namespace Robust.Shared.Network
             _config.UnsubValueChanged(CVars.NetRapidConnectionDecay, RapidConnectionDecayChanged);
             _config.UnsubValueChanged(CVars.NetMaxFragmentReassemblyBytesPerConnection, MaxFragmentReassemblyBytesPerConnectionChanged);
             _config.UnsubValueChanged(CVars.NetFragmentGroupTimeout, FragmentGroupTimeoutChanged);
+            _config.UnsubValueChanged(CVars.NetMaxFragmentReassemblyBytes, MaxFragmentReassemblyBytesChanged); // Starlight-edit
 
             _serializer.ClientHandshakeComplete -= OnSerializerOnClientHandshakeComplete;
 
@@ -788,6 +798,8 @@ namespace Robust.Shared.Network
                 NetIncomingMessageType.ErrorMessage,
                 _config.GetCVar(CVars.NetLidgrenLogError));
 
+            netConfig.DisableMessageType(NetIncomingMessageType.DiscoveryRequest | NetIncomingMessageType.DiscoveryResponse); // Starlight-edit
+
             netConfig.LogRateLimiterEnabled = _config.GetCVar(CVars.NetLidgrenLogRateLimit);
             netConfig.LogRateLimitTargets = (NetLogRateLimitTarget) _config.GetCVar(CVars.NetLidgrenLogRateLimitTargets);
             netConfig.LogRateLimitBurst = _config.GetCVar(CVars.NetLidgrenLogRateLimitBurst);
@@ -846,6 +858,7 @@ namespace Robust.Shared.Network
             netConfig.ExpandMTUFailAttempts = _config.GetCVar(CVars.NetMtuExpandFailAttempts);
             netConfig.MaximumFragmentReassemblyBytesPerConnection = _config.GetCVar(CVars.NetMaxFragmentReassemblyBytesPerConnection);
             netConfig.FragmentGroupTimeout = _config.GetCVar(CVars.NetFragmentGroupTimeout);
+            netConfig.MaximumFragmentReassemblyBytes = _config.GetCVar(CVars.NetMaxFragmentReassemblyBytes); // Starlight-edit
 
             return netConfig;
         }
