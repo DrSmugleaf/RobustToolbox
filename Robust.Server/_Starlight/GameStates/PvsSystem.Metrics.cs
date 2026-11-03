@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Robust.Shared.Utility;
 using Prometheus;
 using Robust.Shared;
@@ -51,6 +52,12 @@ internal sealed partial class PvsSystem
     [ThreadStatic]
     private static PvsThreadMetrics? _currentThreadMetrics;
 
+    /// <summary>
+    /// Ticks spent sending states. Not thread-local, since the send job may still be running
+    /// on worker threads while <see cref="PublishMetrics"/> runs.
+    /// </summary>
+    private long _sendTicks;
+
     private PerThreadMetrics<PvsThreadMetrics> _threadMetrics = default!;
     private readonly List<PvsThreadMetrics> _collectedMetrics = new();
     private (Counter.Child Seconds, Counter.Child Count)[]? _componentMonitors;
@@ -97,6 +104,8 @@ internal sealed partial class PvsSystem
         _componentMonitors ??= new (Counter.Child, Counter.Child)[registrations.Count];
         var freq = (double) Stopwatch.Frequency;
 
+        PhaseSend.Inc(Interlocked.Exchange(ref _sendTicks, 0) / freq);
+
         _threadMetrics.Collect(_collectedMetrics);
         foreach (var metrics in _collectedMetrics)
         {
@@ -123,10 +132,9 @@ internal sealed partial class PvsSystem
 
             PhaseCompute.Inc(metrics.ComputeTicks / freq);
             PhaseSerialize.Inc(metrics.SerializeTicks / freq);
-            PhaseSend.Inc(metrics.SendTicks / freq);
             PhaseReplay.Inc(metrics.ReplayTicks / freq);
             StateBytes.Inc(metrics.StateBytes);
-            metrics.ComputeTicks = metrics.SerializeTicks = metrics.SendTicks = metrics.ReplayTicks = 0;
+            metrics.ComputeTicks = metrics.SerializeTicks = metrics.ReplayTicks = 0;
             metrics.StateBytes = 0;
         }
     }
@@ -139,7 +147,6 @@ internal sealed partial class PvsSystem
 
         public long ComputeTicks;
         public long SerializeTicks;
-        public long SendTicks;
         public long ReplayTicks;
         public long StateBytes;
 

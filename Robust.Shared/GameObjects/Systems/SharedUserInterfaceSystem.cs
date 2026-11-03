@@ -183,11 +183,11 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
         {
             var attempt = new BoundUserInterfaceMessageAttempt(sender, uid, msg.UiKey, msg.Message);
 
-            RaiseLocalEvent(attempt);
+            RaiseLocalEvent(ref attempt);
             if (attempt.Cancelled)
                 return;
 
-            RaiseLocalEvent(uid, attempt);
+            RaiseLocalEvent(uid, ref attempt);
             if (attempt.Cancelled)
                 return;
         }
@@ -366,41 +366,44 @@ public abstract partial class SharedUserInterfaceSystem : EntitySystem
 
     private void OnUserInterfaceGetState(Entity<UserInterfaceComponent> ent, ref ComponentGetState args)
     {
-        var aspects = EntityManager.GetModifiedAspects(ent.Comp, args.FromTick);
-
-        switch (aspects)
+        if (args.FromTick > ent.Comp.CreationTick)
         {
-            case >= DeltaAspect.Unclassified:
-                break;
-            case 1 << 0:
+            var aspects = EntityManager.GetModifiedAspects(ent.Comp, args.FromTick);
+
+            switch (aspects)
             {
-                // Starlight-start
-                if (MetricsEnabled)
-                    CountStateSends(ent, args.Player, StateKindActors);
-                // Starlight-end
+                case >= DeltaAspect.Unclassified:
+                    break;
+                case 1 << 0:
+                {
+                    // Starlight-start
+                    if (MetricsEnabled)
+                        CountStateSends(ent, args.Player, StateKindActors);
+                    // Starlight-end
 
-                var state = new UserInterfaceActorsDeltaState();
-                AddActors(ent, state.Actors, ref args);
+                    var state = new UserInterfaceActorsDeltaState();
+                    AddActors(ent, state.Actors, ref args);
 
-                args.State = state;
-                return;
-            }
-            case 1 << 2:
-            {
-                // Starlight-start
-                if (MetricsEnabled)
-                    CountStateSends(ent, args.Player, StateKindStates);
-                // Starlight-end
+                    args.State = state;
+                    return;
+                }
+                case 1 << 2:
+                {
+                    // Starlight-start
+                    if (MetricsEnabled)
+                        CountStateSends(ent, args.Player, StateKindStates);
+                    // Starlight-end
 
-                var states = ent.Comp.States;
+                    var states = ent.Comp.States;
 
-                // TODO Game State
-                // Force the client to serialize & de-serialize implicitly generated component states.
-                if (_netManager.IsClient)
-                    states = new(states);
+                    // TODO Game State
+                    // Force the client to serialize & de-serialize implicitly generated component states.
+                    if (_netManager.IsClient)
+                        states = new(states);
 
-                args.State = new UserInterfaceStatesDeltaState {States = states};
-                return;
+                    args.State = new UserInterfaceStatesDeltaState {States = states};
+                    return;
+                }
             }
         }
 

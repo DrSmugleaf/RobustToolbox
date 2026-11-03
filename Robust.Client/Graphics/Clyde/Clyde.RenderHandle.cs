@@ -650,6 +650,7 @@ namespace Robust.Client.Graphics.Clyde
                 /// <param name="xform">The entity's transform component.
                 /// Only required if <see cref="overrideDirection"/> is null.</param>
                 /// <param name="xformSystem">The transform system</param>
+                /// <param name="postShaders">The post-shader passes to apply to this draw.</param>
                 public override void DrawEntity(EntityUid entity,
                     Vector2 position,
                     Vector2 scale,
@@ -658,9 +659,10 @@ namespace Robust.Client.Graphics.Clyde
                     Direction? overrideDirection = null,
                     SpriteComponent? sprite = null,
                     TransformComponent? xform = null,
-                    SharedTransformSystem? xformSystem = null)
+                    SharedTransformSystem? xformSystem = null,
+                    IReadOnlyList<SpriteComponent.PostShaderEntry>? postShaders = null)
                 {
-                    _renderHandle.DrawEntity(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite, xform, xformSystem);
+                    _renderHandle.DrawEntity(entity, position, scale, worldRot, eyeRot, overrideDirection, sprite, xform, xformSystem, postShaders);
                 }
             }
 

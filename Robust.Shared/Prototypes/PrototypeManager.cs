@@ -370,9 +370,11 @@ namespace Robust.Shared.Prototypes
 
             var byType = new Dictionary<Type, PrototypesReloadedEventArgs.PrototypeChangeSet>();
             var modifiedKinds = new HashSet<KindData>();
+            var validationContext = throwOnFailure ? new YamlValidationContext(_serializationManager) : null;
+
+            var toValidate = new List<(KindData KindData, string Id)>();
             var toProcess = new HashSet<string>();
             var processQueue = new Queue<string>();
-            var validationContext = throwOnFailure ? new YamlValidationContext(_serializationManager) : null;
 
             foreach (var kind in prototypeTypeOrder)
             {
@@ -464,7 +466,7 @@ namespace Robust.Shared.Prototypes
                     toProcess.Remove(id);
 
                     if (validationContext != null)
-                        ValidatePrototype(kind, id, kindData.Results[id], validationContext);
+                        toValidate.Add((kindData, id));
 
                     var prototype = TryReadPrototype(
                         kind,
@@ -485,6 +487,13 @@ namespace Robust.Shared.Prototypes
 
                 byType.Add(kindData.Type, new(modifiedInstances));
                 modifiedKinds.Add(kindData);
+            }
+
+            // Second pass: validate all updated prototypes now that every mapping is present in Results.
+            if (validationContext != null)
+            {
+                foreach (var (kindData, id) in toValidate)
+                    ValidatePrototype(kindData.Type, id, kindData.Results[id], validationContext);
             }
 
             Freeze(modifiedKinds);

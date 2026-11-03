@@ -141,7 +141,11 @@ namespace Robust.Server.GameObjects
         /// <inheritdoc />
         public event EventHandler<object>? ReceivedSystemMessage;
 
-        private readonly PriorityQueue<MsgEntity> _queue = new(new MessageSequenceComparer());
+        private readonly PriorityQueue<(ulong arrival, MsgEntity msg)> _queue = new(new MessageSequenceComparer());
+
+        // PriorityQueue isn't stable, and non-predicted messages all have Sequence 0.
+        // Without this, same-tick messages from a client could be dispatched in a different order than they were sent.
+        private ulong _incomingMsgSequence;
 
         private readonly Dictionary<ICommonSession, uint> _lastProcessedSequencesCmd =
             new();
@@ -166,10 +170,10 @@ namespace Robust.Server.GameObjects
 
             using (_entityNetHistogram?.NewTimer())
             {
-                while (_queue.Count != 0 && _queue.Peek().SourceTick <= _gameTiming.CurTick)
+                while (_queue.Count != 0 && _queue.Peek().msg.SourceTick <= _gameTiming.CurTick)
                 {
                     // Starlight-start
-                    var message = _queue.Take();
+                    var message = _queue.Take().msg;
                     DequeuedEntityNetworkMessage(message);
                     DispatchEntityNetworkMessage(message);
                     // Starlight-end
@@ -257,7 +261,8 @@ namespace Robust.Server.GameObjects
             _queuedEntityMessages[message.MsgChannel] = queued;
             // Starlight-end
 
-            _queue.Add(message);
+            // Tag each message with an increasing arrival number, so ties keep the order they came in
+            _queue.Add((++_incomingMsgSequence, message));
         }
 
         // Starlight-start
@@ -336,20 +341,18 @@ namespace Robust.Server.GameObjects
             }
         }
 
-        internal sealed class MessageSequenceComparer : IComparer<MsgEntity>
+        internal sealed class MessageSequenceComparer : IComparer<(ulong arrival, MsgEntity msg)>
         {
-            public int Compare(MsgEntity? x, MsgEntity? y)
+            public int Compare((ulong arrival, MsgEntity msg) x, (ulong arrival, MsgEntity msg) y)
             {
-                DebugTools.AssertNotNull(x);
-                DebugTools.AssertNotNull(y);
+                // Earliest first: by tick, then by sequence, then by arrival.
+                var cmp = y.msg.SourceTick.CompareTo(x.msg.SourceTick);
+                if (cmp == 0)
+                    cmp = y.msg.Sequence.CompareTo(x.msg.Sequence);
+                if (cmp == 0)
+                    cmp = y.arrival.CompareTo(x.arrival);
 
-                var cmp = y!.SourceTick.CompareTo(x!.SourceTick);
-                if (cmp != 0)
-                {
-                    return cmp;
-                }
-
-                return y.Sequence.CompareTo(x.Sequence);
+                return cmp;
             }
         }
 

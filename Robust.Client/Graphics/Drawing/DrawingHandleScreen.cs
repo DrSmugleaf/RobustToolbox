@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
 using Robust.Client._Starlight.Graphics;
@@ -238,6 +239,7 @@ public abstract class DrawingHandleScreen(Texture white) : DrawingHandleBase(whi
     /// <param name="xform">The entity's transform component.
     /// Only required if <see cref="overrideDirection"/> is null.</param>
     /// <param name="xformSystem">The transform system</param>
+    /// <param name="postShaders">The post-shader passes to apply to this draw.</param>
     public abstract void DrawEntity(EntityUid entity,
         Vector2 position,
         Vector2 scale,
@@ -246,5 +248,6 @@ public abstract class DrawingHandleScreen(Texture white) : DrawingHandleBase(whi
         Shared.Maths.Direction? overrideDirection = null,
         SpriteComponent? sprite = null,
         TransformComponent? xform = null,
-        SharedTransformSystem? xformSystem = null);
+        SharedTransformSystem? xformSystem = null,
+        IReadOnlyList<SpriteComponent.PostShaderEntry>? postShaders = null);
 }

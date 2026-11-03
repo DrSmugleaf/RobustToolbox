@@ -99,7 +99,7 @@ namespace Robust.Shared.Network
             catch (OperationCanceledException)
             {
                 winningPeer.Peer.Shutdown("Cancelled");
-                _toCleanNetPeers.Add(winningPeer.Peer);
+                _toCleanNetPeers.Enqueue(winningPeer.Peer);
                 ClientConnectState = ClientConnectionState.NotConnecting;
                 return;
             }
@@ -108,7 +108,7 @@ namespace Robust.Shared.Network
                 OnConnectFailed(e.Message);
                 _logger.Error("Exception during handshake: {0}", e);
                 winningPeer.Peer.Shutdown("Something happened.");
-                _toCleanNetPeers.Add(winningPeer.Peer);
+                _toCleanNetPeers.Enqueue(winningPeer.Peer);
                 ClientConnectState = ClientConnectionState.NotConnecting;
                 return;
             }
@@ -362,7 +362,7 @@ namespace Robust.Shared.Network
                     {
                         // Connection failed, clean up and yeet an exception
                         peer.Shutdown(reason);
-                        _toCleanNetPeers.Add(peer);
+                        _toCleanNetPeers.Enqueue(peer);
                         throw new ConnectionFailedException(reason);
                     }
 
@@ -372,7 +372,7 @@ namespace Robust.Shared.Network
                 {
                     // Something went wrong!
                     peer.Shutdown("Connection attempt failed");
-                    _toCleanNetPeers.Add(peer);
+                    _toCleanNetPeers.Enqueue(peer);
                     throw;
                 }
             }
@@ -533,7 +533,7 @@ namespace Robust.Shared.Network
             public void Dispose()
             {
                 Peer.Peer.Shutdown("Disposing unused connection attempt");
-                netManager._toCleanNetPeers.Add(Peer.Peer);
+                netManager._toCleanNetPeers.Enqueue(Peer.Peer);
             }
         }
     }
