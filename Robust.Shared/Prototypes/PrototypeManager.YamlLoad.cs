@@ -1073,7 +1073,7 @@ public partial class PrototypeManager
         => IsTag(node.Tag, tag);
     // Starlight-end
 
-    private static bool IsTagWithParam(DataNode dataNode, string tag, out string? param)
+    private bool IsTagWithParam(DataNode dataNode, string tag, out string? param)
     {
         param = null;
 
